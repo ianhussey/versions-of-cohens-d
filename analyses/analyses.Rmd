@@ -1,0 +1,573 @@
+---
+title: "Meta-analyses"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    highlight: haddock
+    toc: yes
+    toc_float: yes
+---
+
+http://jakewestfall.org/blog/index.php/2016/03/25/five-different-cohens-d-statistics-for-within-subject-designs/
+
+```{r include=FALSE}
+
+knitr::opts_chunk$set(message = FALSE, 
+                      warning = FALSE)
+
+```
+
+# Dependencies 
+
+```{r}
+
+library(tidyverse)
+library(effsize)
+library(metafor)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(esci) # devtools::install_github("rcalinjageman/esci")
+
+# multivariate meta analysis function
+fit_mv_meta <- function(data){
+  rma.mv(yi     = es,
+         V      = variance, 
+         random = ~ 1 | condition,
+         slab   = paste0(condition, ": ", dv),
+         data   = data)
+}
+
+cohens_ds <- function(data){
+  # NB this requires that pre be the second level of the timepoint factor - ensure this is changed in wrangling
+  require(effsize)
+  fit <- effsize::cohen.d(score ~ timepoint,
+                          paired = FALSE,
+                          pooled = TRUE,
+                          data = data)
+  
+  results <- 
+    tibble(es       = fit$estimate,
+           ci_lower = fit$conf.int[1],
+           ci_upper = fit$conf.int[2]) %>%
+    mutate(variance = ((ci_upper - ci_lower) / (1.96*2))^2)
+  
+  return(results)
+}
+
+glass_delta <- function(data){
+  # NB this requires that pre be the second level of the timepoint factor - ensure this is changed in wrangling
+  require(effsize)
+  fit <- effsize::cohen.d(score ~ timepoint,
+                          paired = FALSE,
+                          pooled = FALSE,
+                          data = data)
+  
+  results <- 
+    tibble(es       = fit$estimate,
+           ci_lower = fit$conf.int[1],
+           ci_upper = fit$conf.int[2]) %>%
+    mutate(variance = ((ci_upper - ci_lower) / (1.96*2))^2)
+  
+  return(results)
+}
+
+cohens_drm <- function(data){
+  # NB this requires that pre be the second level of the timepoint factor - ensure this is changed in wrangling
+  require(effsize)
+  fit <- effsize::cohen.d(score ~ timepoint | Subject(id),
+                          paired = TRUE,
+                          pooled = TRUE,
+                          data = data)
+
+  results <- 
+    tibble(es       = fit$estimate,
+           ci_lower = fit$conf.int[1],
+           ci_upper = fit$conf.int[2]) %>%
+    mutate(variance = ((ci_upper - ci_lower) / (1.96*2))^2)
+  
+  return(results)
+}
+
+cohens_dav <- function(data){
+  require(esci)
+  
+  fit <- 
+    esci::estimateStandardizedMeanDifference(m1 = data$mean_t2, 
+                                             m2 = data$mean_t1, 
+                                             s1 = data$sd_t2, 
+                                             s2 = data$sd_t1, 
+                                             n1 = data$n, 
+                                             n2 = data$n,
+                                             r  = data$r, 
+                                             conf.level = .95,
+                                             paired = TRUE) 
+  
+  return(tibble(es = fit$cohend,
+                ci_lower = fit$cohend.low,
+                ci_upper = fit$cohend.high,
+                r  = fit$r))
+}
+
+```
+
+# Data wrangling
+
+```{r}
+
+# exclusions
+data_processed <- read_csv("../data/data_processed.csv") %>%
+  # recode conditions
+  mutate(condition = paste(intervention, intervention_subtype),
+         condition = str_remove(condition, " NA")) %>%
+  select(id, 
+         condition,
+         dv1_pre_sum_score,
+         dv2_pre_sum_score,
+         dv3_pre_sum_score,
+         dv1_post_sum_score,
+         dv2_post_sum_score,
+         dv3_post_sum_score,
+         dv1_followup_sum_score,
+         dv2_followup_sum_score,
+         dv3_followup_sum_score) 
+
+# reshaping
+data_prepost <- data_processed %>%
+  select(id,
+         condition, 
+         dv1_pre_sum_score,
+         dv2_pre_sum_score,
+         dv3_pre_sum_score,
+         dv1_post_sum_score,
+         dv2_post_sum_score,
+         dv3_post_sum_score) %>%
+  drop_na() %>%
+  pivot_longer(names_to = "variable",
+               values_to = "score",
+               cols = c(dv1_pre_sum_score,
+                        dv2_pre_sum_score,
+                        dv3_pre_sum_score,
+                        dv1_post_sum_score,
+                        dv2_post_sum_score,
+                        dv3_post_sum_score)) %>%
+  mutate(variable = str_remove(variable, "_sum_score")) %>%
+  separate(variable, into = c("dv", "timepoint"), sep = "_") 
+
+data_prefollowup <- data_processed %>%
+  select(id,
+         condition, 
+         dv1_pre_sum_score,
+         dv2_pre_sum_score,
+         dv3_pre_sum_score,
+         dv1_followup_sum_score,
+         dv2_followup_sum_score,
+         dv3_followup_sum_score) %>%
+  drop_na() %>%
+  pivot_longer(names_to = "variable",
+               values_to = "score",
+               cols = c(dv1_pre_sum_score,
+                        dv2_pre_sum_score,
+                        dv3_pre_sum_score,
+                        dv1_followup_sum_score,
+                        dv2_followup_sum_score,
+                        dv3_followup_sum_score)) %>%
+  mutate(variable = str_remove(variable, "_sum_score")) %>%
+  separate(variable, into = c("dv", "timepoint"), sep = "_")
+
+```
+
+# Sample sizes
+
+```{r}
+
+data_processed %>%
+  count() %>%
+  arrange() %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+
+```
+
+# Differences between pre and post
+
+## Cohen's $d_{s}$
+
+```{r}
+
+results_cohens_ds <- data_prepost %>%
+  group_by(condition, dv) %>%
+  do(cohens_ds(.)) 
+
+fit_cohens_ds <- fit_mv_meta(results_cohens_ds)
+
+forest(fit_cohens_ds, xlab = "Cohen's ds")
+
+```
+
+## Glass' $\Delta$
+
+SDs are larger at post, providing a motivation for Delta over d.
+
+```{r}
+
+data_prepost %>%
+  group_by(dv, timepoint) %>%
+  summarize(sd = sd(score))
+
+```
+
+```{r}
+
+results_glass_delta <- data_prepost %>%
+  group_by(condition, dv) %>%
+  do(glass_delta(.)) 
+
+fit_glass_delta <- fit_mv_meta(results_glass_delta)
+
+forest(fit_glass_delta, xlab = "Glass' Delta")
+
+```
+
+## Cohen's $d_{z}$
+
+```{r}
+
+results_cohens_dz <- data_prepost %>%
+  pivot_wider(names_from = timepoint,
+              values_from = score) %>%
+  mutate(diff = post - pre) %>%
+  group_by(condition, dv) %>%
+  summarize(es = mean(diff)/sd(diff),
+            n = n()) %>%
+  group_by(condition, dv) %>%
+  mutate(ci_lower = psych::cohen.d.ci(es, n1 = n)[1, "lower"],
+         ci_upper = psych::cohen.d.ci(es, n1 = n)[1, "upper"],
+         variance = ((ci_upper - ci_lower) / (1.96*2))^2)
+
+fit_cohens_dz <- fit_mv_meta(results_cohens_dz)
+
+forest(fit_cohens_dz, xlab = "Cohen's dz")
+
+```
+
+## Cohen's $d_{rm}$
+
+NB I don't fully understand the internal method. I think it is Cohen's d_rm but am unclear from code and documentation.
+
+```{r}
+
+results_cohens_drm <- data_prepost %>%
+  group_by(condition, dv) %>%
+  do(cohens_drm(.))
+
+fit_cohens_drm <- fit_mv_meta(results_cohens_drm)
+
+forest(fit_cohens_drm, xlab = "Within-subjects Cohen's drm")
+
+```
+
+## Cohen's $d_{av}$
+
+This is the only one that is all of (1) known internal workings, (2) good estimation width becuase it takes within subject non-independence into account, and (3) has congruent magnitude interpretations with Cohen's ds / can be meta analyzed with it / can't be accused of effect size inflation. 
+
+Lakens 2013, cummings 2016, esci package.
+
+```{r}
+
+results_cohens_dav_msd <- data_prepost %>%
+  group_by(dv, condition, timepoint) %>%
+  summarize(mean = mean(score),
+            sd = sd(score),
+            n = n(),
+            .groups = "drop") %>%
+  mutate(timepoint = case_when(timepoint == "pre" ~ "t1",
+                               timepoint == "post" ~ "t2")) %>%
+  pivot_wider(names_from = "timepoint",
+              values_from = c("mean", "sd")) 
+
+results_cohens_dav_r <- data_prepost %>%
+  pivot_wider(names_from = timepoint,
+              values_from = score) %>%
+  select(dv, condition, t1 = pre, t2 = post) %>%
+  group_by(dv, condition) %>%
+  summarize(r = cor(t1, t2))
+
+results_cohens_dav <- 
+  full_join(results_cohens_dav_msd, results_cohens_dav_r, by = c("dv", "condition")) %>%
+  group_by(dv, condition) %>%
+  do(cohens_dav(.)) %>%
+  mutate(variance = ((ci_upper - ci_lower) / (1.96*2))^2) %>%
+  arrange(condition, dv)
+  
+fit_cohens_dav <- fit_mv_meta(results_cohens_dav)
+
+forest(fit_cohens_dav, xlab = "Cohen's dav")
+
+```
+
+## Comparisons
+
+```{r}
+
+# combined effect sizes
+results_effect_sizes <- 
+  bind_rows(mutate(results_cohens_ds,   Method = "Cohen's ds"),
+            mutate(results_glass_delta, Method = "Glass' Δ"),
+            mutate(results_cohens_dz,   Method = "Cohen's dz"),
+            mutate(results_cohens_drm,  Method = "Cohen's drm"),
+            mutate(results_cohens_dav,  Method = "Cohen's dav")) %>%
+  # combined meta effect sizes
+  mutate(combined_conditions = paste(condition, dv, sep = ": "))
+
+# meta effect sizes
+results_meta_effect_sizes <- 
+  tibble(Method = c("Cohen's ds",
+                    "Glass' Δ",
+                    "Cohen's dz",
+                    "Cohen's drm",
+                    "Cohen's dav"),
+         es = c(fit_cohens_ds$b,
+                fit_glass_delta$b,
+                fit_cohens_dz$b,
+                fit_cohens_drm$b,
+                fit_cohens_dav$b),
+         ci_lower = c(fit_cohens_ds$ci.lb,
+                      fit_glass_delta$ci.lb,
+                      fit_cohens_dz$ci.lb,
+                      fit_cohens_drm$ci.lb,
+                      fit_cohens_dav$ci.lb),
+         ci_upper = c(fit_cohens_ds$ci.ub,
+                      fit_glass_delta$ci.ub,
+                      fit_cohens_dz$ci.ub,
+                      fit_cohens_drm$ci.ub,
+                      fit_cohens_dav$ci.ub)) %>%
+  # combined meta effect sizes
+  mutate(combined_conditions = "Meta")
+
+
+bind_rows(results_effect_sizes, 
+          results_meta_effect_sizes) %>%
+  mutate(Method = fct_relevel(Method,
+                              "Cohen's ds",
+                              "Glass' Δ",
+                              "Cohen's drm",
+                              "Cohen's dav",
+                              "Cohen's dz")) %>%
+  ggplot(aes(combined_conditions, es, color = Method)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), position = position_dodge(width = 0.5)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("") +
+  ylab("Effect size") 
+  
+```
+
+```{r}
+
+ggplot(results_meta_effect_sizes, aes(Method, es)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  geom_point() +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("Method") +
+  ylab("Meta effect size")
+
+```
+
+# Differences between pre and followup
+
+## Cohen's $d_{s}$
+
+```{r}
+
+results_cohens_ds <- data_prefollowup %>%
+  group_by(condition, dv) %>%
+  do(cohens_ds(.)) 
+
+fit_cohens_ds <- fit_mv_meta(results_cohens_ds)
+
+forest(fit_cohens_ds, xlab = "Cohen's ds")
+
+```
+
+## Glass' $\Delta$
+
+SDs are larger at post, providing a motivation for Delta over d.
+
+```{r}
+
+data_prefollowup %>%
+  group_by(dv, timepoint) %>%
+  summarize(sd = sd(score))
+
+```
+
+```{r}
+
+results_glass_delta <- data_prefollowup %>%
+  group_by(condition, dv) %>%
+  do(glass_delta(.)) 
+
+fit_glass_delta <- fit_mv_meta(results_glass_delta)
+
+forest(fit_glass_delta, xlab = "Glass' Delta")
+
+```
+
+## Cohen's $d_{z}$
+
+```{r}
+
+results_cohens_dz <- data_prefollowup %>%
+  pivot_wider(names_from = timepoint,
+              values_from = score) %>%
+  drop_na() %>%
+  mutate(diff = followup - pre) %>%
+  group_by(condition, dv) %>%
+  summarize(es = mean(diff)/sd(diff),
+            n = n()) %>%
+  group_by(condition, dv) %>%
+  mutate(ci_lower = psych::cohen.d.ci(es, n1 = n)[1, "lower"],
+         ci_upper = psych::cohen.d.ci(es, n1 = n)[1, "upper"],
+         variance = ((ci_upper - ci_lower) / (1.96*2))^2)
+
+fit_cohens_dz <- fit_mv_meta(results_cohens_dz)
+
+forest(fit_cohens_dz, xlab = "Cohen's dz")
+
+```
+
+## Cohen's $d_{rm}$
+
+NB I don't fully understand the internal method. I think it is Cohen's d_rm but am unclear from code and documentation.
+
+```{r}
+
+results_cohens_drm <- data_prefollowup %>%
+  group_by(condition, dv) %>%
+  do(cohens_drm(.))
+
+fit_cohens_drm <- fit_mv_meta(results_cohens_drm)
+
+forest(fit_cohens_drm, xlab = "Within-subjects Cohen's drm")
+
+```
+
+## Cohen's $d_{av}$
+
+This is the only one that is all of (1) known internal workings, (2) good estimation width becuase it takes within subject non-independence into account, and (3) has congruent magnitude interpretations with Cohen's ds / can be meta analyzed with it / can't be accused of effect size inflation. 
+
+Lakens 2013, cummings 2016, esci package.
+
+```{r}
+
+results_cohens_dav_msd <- data_prefollowup %>%
+  group_by(dv, condition, timepoint) %>%
+  summarize(mean = mean(score),
+            sd = sd(score),
+            n = n(),
+            .groups = "drop") %>%
+  mutate(timepoint = case_when(timepoint == "pre" ~ "t1",
+                               timepoint == "followup" ~ "t2")) %>%
+  pivot_wider(names_from = "timepoint",
+              values_from = c("mean", "sd")) 
+
+results_cohens_dav_r <- data_prefollowup %>%
+  pivot_wider(names_from = timepoint,
+              values_from = score) %>%
+  select(dv, condition, t1 = pre, t2 = followup) %>%
+  group_by(dv, condition) %>%
+  summarize(r = cor(t1, t2))
+
+results_cohens_dav <- 
+  full_join(results_cohens_dav_msd, results_cohens_dav_r, by = c("dv", "condition")) %>%
+  group_by(dv, condition) %>%
+  do(cohens_dav(.)) %>%
+  mutate(variance = ((ci_upper - ci_lower) / (1.96*2))^2) %>%
+  arrange(condition, dv)
+  
+fit_cohens_dav <- fit_mv_meta(results_cohens_dav)
+
+forest(fit_cohens_dav, xlab = "Cohen's dav")
+
+```
+
+## Comparisons
+
+```{r}
+
+# combined effect sizes
+results_effect_sizes <- 
+  bind_rows(mutate(results_cohens_ds,   Method = "Cohen's ds"),
+            mutate(results_glass_delta, Method = "Glass' Δ"),
+            mutate(results_cohens_dz,   Method = "Cohen's dz"),
+            mutate(results_cohens_drm,  Method = "Cohen's drm"),
+            mutate(results_cohens_dav,  Method = "Cohen's dav")) %>%
+  # combined meta effect sizes
+  mutate(combined_conditions = paste(condition, dv, sep = ": "))
+
+# meta effect sizes
+results_meta_effect_sizes <- 
+  tibble(Method = c("Cohen's ds",
+                    "Glass' Δ",
+                    "Cohen's dz",
+                    "Cohen's drm",
+                    "Cohen's dav"),
+         es = c(fit_cohens_ds$b,
+                fit_glass_delta$b,
+                fit_cohens_dz$b,
+                fit_cohens_drm$b,
+                fit_cohens_dav$b),
+         ci_lower = c(fit_cohens_ds$ci.lb,
+                      fit_glass_delta$ci.lb,
+                      fit_cohens_dz$ci.lb,
+                      fit_cohens_drm$ci.lb,
+                      fit_cohens_dav$ci.lb),
+         ci_upper = c(fit_cohens_ds$ci.ub,
+                      fit_glass_delta$ci.ub,
+                      fit_cohens_dz$ci.ub,
+                      fit_cohens_drm$ci.ub,
+                      fit_cohens_dav$ci.ub)) %>%
+  # combined meta effect sizes
+  mutate(combined_conditions = "Meta")
+
+
+bind_rows(results_effect_sizes, 
+          results_meta_effect_sizes) %>%
+  mutate(Method = fct_relevel(Method,
+                              "Cohen's ds",
+                              "Glass' Δ",
+                              "Cohen's drm",
+                              "Cohen's dav",
+                              "Cohen's dz")) %>%
+  ggplot(aes(combined_conditions, es, color = Method)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), position = position_dodge(width = 0.5)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("") +
+  ylab("Effect size") 
+  
+```
+
+```{r}
+
+ggplot(results_meta_effect_sizes, aes(Method, es)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  geom_point() +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("Method") +
+  ylab("Meta effect size")
+
+```
+
+
+
