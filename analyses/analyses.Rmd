@@ -242,9 +242,9 @@ results_cohens_dz <- data_prepost %>%
   summarize(es = mean(diff)/sd(diff),
             n = n()) %>%
   group_by(condition, dv) %>%
-  mutate(ci_lower = psych::cohen.d.ci(es, n1 = n)[1, "lower"],
-         ci_upper = psych::cohen.d.ci(es, n1 = n)[1, "upper"],
-         variance = ((ci_upper - ci_lower) / (1.96*2))^2)
+  mutate(variance = (1/n)+(es^2/(2*n)), # variance calculated directly rather than estimating from CIs
+         ci_lower = psych::cohen.d.ci(es, n1 = n)[1, "lower"],
+         ci_upper = psych::cohen.d.ci(es, n1 = n)[1, "upper"])
 
 fit_cohens_dz <- fit_mv_meta(results_cohens_dz)
 
@@ -432,9 +432,9 @@ results_cohens_dz <- data_prefollowup %>%
   summarize(es = mean(diff)/sd(diff),
             n = n()) %>%
   group_by(condition, dv) %>%
-  mutate(ci_lower = psych::cohen.d.ci(es, n1 = n)[1, "lower"],
-         ci_upper = psych::cohen.d.ci(es, n1 = n)[1, "upper"],
-         variance = ((ci_upper - ci_lower) / (1.96*2))^2)
+  mutate(variance = (1/n)+(es^2/(2*n)), # variance calculated directly rather than estimating from CIs
+         ci_lower = psych::cohen.d.ci(es, n1 = n)[1, "lower"],
+         ci_upper = psych::cohen.d.ci(es, n1 = n)[1, "upper"])
 
 fit_cohens_dz <- fit_mv_meta(results_cohens_dz)
 
