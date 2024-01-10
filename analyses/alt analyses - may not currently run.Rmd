@@ -9,7 +9,7 @@ output:
     toc_float: yes
 ---
 
-http://jakewestfall.org/blog/index.php/2016/03/25/five-different-cohens-d-statistics-for-within-subject-designs/
+https://imaging.mrc-cbu.cam.ac.uk/statswiki/FAQ/tdunpaired
 
 ```{r include=FALSE}
 
