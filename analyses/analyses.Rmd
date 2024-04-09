@@ -1,19 +1,21 @@
 ---
 title: "Versions of Cohen's *d* for dependent data"
+author: "Ian Hussey & Jamie Cummins"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document:
     code_folding: hide
     highlight: haddock
+    theme: flatly
     toc: yes
     toc_float: yes
 ---
 
 # TODO
 
-- compare effsize::cohen.d or other implementations to the ones below
-- compare cohens_dav from {esci} to the ones below
-- ensure that d_b, the within subjects version of glass' delta, is using the correct timepoint's SD
+- add explanatory notes about which metrics have more and less desirable properties, what desirable properties are, and which metrics should agree etc.
+- determine what the remaining metrics are doing under the hood, ie the ones labelled '???'
+- obtain code for cohens_dav from {esci} for dependent data? It used to exist.
 
 # Sources
 
@@ -35,20 +37,19 @@ N.B.: to ensure full computational reproducibility, R version 4.3.3 should be us
 ```{r}
 
 library(groundhog)
+
 groundhog_day = "2024-04-07"
+
 packages = c("effectsize","faux","janitor",
-              "rstatix", "effsize",
+             "rstatix", "effsize",
              "psych", "MBESS", "lsr",
              "metafor", "esc", "esci",
              "dplyr", "tidyr", "tibble",
-             "forcats", "ggplot2")
+             "forcats", "ggplot2", "stringr")
+
 groundhog.library(packages, groundhog_day)
 
 ```
-
-# Implementations to add
-
-
 
 # Functions
 
@@ -56,8 +57,11 @@ groundhog.library(packages, groundhog_day)
 
 cohens_d_s_metafor <- function(data){
   # nb always applies hedges correction
-
-  summaries <- data_simulated_high_r |>
+  require(dplyr)
+  require(tibble)
+  require(metafor)
+  
+  summaries <- data |>
     group_by(timepoint) |>
     summarize(mean = mean(score),
               sd = sd(score),
@@ -82,22 +86,25 @@ cohens_d_s_metafor <- function(data){
   return(res)
 }
 
-cohens_d_s_esc <- function(data, hedges_correction = TRUE){
-  
 
+cohens_d_s_esc <- function(data, hedges_correction = TRUE){
+  require(dplyr)
+  require(tibble)
+  require(esc)
+  
   summaries <- data |>
     group_by(timepoint) |>
     summarize(mean = mean(score),
               sd = sd(score),
               n = n())
   
-  fit <- esc_mean_sd(grp1m  = summaries$mean[summaries$timepoint == "post"],
-                     grp1sd = summaries$sd[summaries$timepoint == "post"],
-                     grp1n  = summaries$n[summaries$timepoint == "post"],
-                     grp2m  = summaries$mean[summaries$timepoint == "pre"],
-                     grp2sd = summaries$sd[summaries$timepoint == "pre"],
-                     grp2n  = summaries$n[summaries$timepoint == "pre"],
-                     es.type = ifelse(hedges_correction, "g", "d"))
+  fit <- esc::esc_mean_sd(grp1m  = summaries$mean[summaries$timepoint == "post"],
+                          grp1sd = summaries$sd[summaries$timepoint == "post"],
+                          grp1n  = summaries$n[summaries$timepoint == "post"],
+                          grp2m  = summaries$mean[summaries$timepoint == "pre"],
+                          grp2sd = summaries$sd[summaries$timepoint == "pre"],
+                          grp2n  = summaries$n[summaries$timepoint == "pre"],
+                          es.type = ifelse(hedges_correction, "g", "d"))
   
   res <- 
     tibble(estimate = fit$es,
@@ -109,8 +116,10 @@ cohens_d_s_esc <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_z_esc <- function(data, hedges_correction = TRUE){
+  require(dplyr)
+  require(tibble)
+  require(esc)
   
-
   summaries <- data |>
     group_by(timepoint) |>
     summarize(mean = mean(score),
@@ -123,14 +132,14 @@ cohens_d_z_esc <- function(data, hedges_correction = TRUE){
     dplyr::select(-id) |>
     cor_test()
   
-  fit <- esc_mean_sd(grp1m  = summaries$mean[summaries$timepoint == "post"],
-                     grp1sd = summaries$sd[summaries$timepoint == "post"],
-                     grp1n  = summaries$n[summaries$timepoint == "post"],
-                     grp2m  = summaries$mean[summaries$timepoint == "pre"],
-                     grp2sd = summaries$sd[summaries$timepoint == "pre"],
-                     grp2n  = summaries$n[summaries$timepoint == "pre"],
-                     r = r$cor,
-                     es.type = ifelse(hedges_correction, "g", "d"))
+  fit <- esc::esc_mean_sd(grp1m  = summaries$mean[summaries$timepoint == "post"],
+                          grp1sd = summaries$sd[summaries$timepoint == "post"],
+                          grp1n  = summaries$n[summaries$timepoint == "post"],
+                          grp2m  = summaries$mean[summaries$timepoint == "pre"],
+                          grp2sd = summaries$sd[summaries$timepoint == "pre"],
+                          grp2n  = summaries$n[summaries$timepoint == "pre"],
+                          r = r$cor,
+                          es.type = ifelse(hedges_correction, "g", "d"))
   
   res <- 
     tibble(estimate = fit$es,
@@ -142,8 +151,10 @@ cohens_d_z_esc <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_s_rstatix <- function(data, hedges_correction = TRUE){
-
-
+  require(dplyr)
+  require(tibble)
+  require(rstatix)
+  
   fit <- rstatix::cohens_d(formula = score ~ timepoint,
                            data = data,
                            comparisons = list(c("pre", "post")),
@@ -162,9 +173,12 @@ cohens_d_s_rstatix <- function(data, hedges_correction = TRUE){
   return(res)
 }
 
+
 cohens_d_z_rstatix <- function(data, hedges_correction = TRUE){
-
-
+  require(dplyr)
+  require(tibble)
+  require(rstatix)
+  
   fit <- rstatix::cohens_d(formula = score ~ timepoint,
                            data = data,
                            comparisons = list(c("pre", "post")),
@@ -183,15 +197,19 @@ cohens_d_z_rstatix <- function(data, hedges_correction = TRUE){
   return(res)
 }
 
+
 # esci used to have a within subjects d in 2020 but now doesn't? and its not in the git history
 cohens_d_s_esci <- function(data, hedges_correction = TRUE){
-
+  require(dplyr)
+  require(tibble)
+  require(esci)
+  
   summaries <- data |>
     group_by(timepoint) |>
     summarize(mean = mean(score),
               sd = sd(score),
               n = n())
-
+  
   fit <- esci::CI_smd_ind_contrast(means = summaries$mean,
                                    sds = summaries$sd,
                                    ns = summaries$n,
@@ -208,8 +226,12 @@ cohens_d_s_esci <- function(data, hedges_correction = TRUE){
   return(res)
 }
 
-cohens_d_s_effsize <- function(data, hedges_correction = TRUE){
 
+cohens_d_s_effsize <- function(data, hedges_correction = TRUE){
+  require(dplyr)
+  require(tibble)
+  require(effsize)
+  
   fit <- effsize::cohen.d(score ~ timepoint, 
                           paired = FALSE,
                           pooled = TRUE,
@@ -226,7 +248,10 @@ cohens_d_s_effsize <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_dep_effsize <- function(data, hedges_correction = TRUE){
-
+  require(dplyr)
+  require(tibble)
+  require(effsize)
+  
   fit <- effsize::cohen.d(score ~ timepoint | Subject(id), 
                           paired = TRUE,
                           pooled = TRUE,
@@ -244,7 +269,10 @@ cohens_d_dep_effsize <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_s_psych <- function(data, hedges_correction = TRUE){
-
+  require(dplyr)
+  require(tibble)
+  require(psych)
+  
   fit <- psych::cohen.d(score ~ timepoint,
                         data = data) 
   
@@ -259,7 +287,9 @@ cohens_d_s_psych <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_s_mbess <- function(data, hedges_correction = TRUE){
-
+  require(dplyr)
+  require(MBESS)
+  
   d <- MBESS::smd(Group.1 = data |> filter(timepoint == "post") |> pull(score), 
                   Group.2 = data |> filter(timepoint == "pre") |> pull(score),
                   Unbiased = hedges_correction)
@@ -281,14 +311,17 @@ cohens_d_s_mbess <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_s_lsr <- function(data){
-
-  # lsr::cohenD returns the absolute value of cohen's d, ie always positive values. fix this here to bring it in line with other packages' functions.
+  require(dplyr)
+  require(tibble)
+  require(lsr)
+  
+  # note that lsr::cohenD returns the absolute value of cohen's d, ie always positive values. fix this here to bring it in line with other packages' functions.
   mean_pre <- data |> dplyr::filter(timepoint == "pre") |> summarize(mean = mean(score))
   mean_post <- data |> dplyr::filter(timepoint == "post") |> summarize(mean = mean(score))
-
+  
   d <- lsr::cohensD(score ~ timepoint,
                     data = data) 
-
+  
   res <- 
     tibble(estimate = as.numeric(ifelse(mean_pre < mean_post, d, d * -1)),
            ci_lower = NA,
@@ -299,15 +332,18 @@ cohens_d_s_lsr <- function(data){
 
 
 cohens_d_dep_lsr <- function(data){
-
-  # lsr::cohenD returns the absolute value of cohen's d, ie always positive values. fix this here to bring it in line with other packages' functions.
+  require(dplyr)
+  require(tibble)
+  require(lsr)
+  
+  # note that lsr::cohenD returns the absolute value of cohen's d, ie always positive values. fix this here to bring it in line with other packages' functions.
   mean_pre <- data |> dplyr::filter(timepoint == "pre") |> summarize(mean = mean(score))
   mean_post <- data |> dplyr::filter(timepoint == "post") |> summarize(mean = mean(score))
-
+  
   d <- lsr::cohensD(data |> dplyr::filter(timepoint == "pre") |> pull(score),
                     data |> dplyr::filter(timepoint == "post") |> pull(score),
                     method = "paired") 
-
+  
   res <- 
     tibble(estimate = as.numeric(ifelse(mean_pre < mean_post, d, d * -1)),
            ci_lower = NA,
@@ -321,7 +357,8 @@ cohens_d_dep_lsr <- function(data){
 # assumes a two sided Student's t test with alpha = .05
 # by default, assumes correlation between timepoints is 0. larger values will narrow the CIs but leave the estimate unchanged. so, default result is the worst case precision.
 d_t_dependent <- function(data, hedges_correction = TRUE, r = 0) { # assumes a correlation of 0 for simplicity
-
+  require(dplyr)
+  
   fit <- t.test(data$score[data$timepoint == "post"],
                 data$score[data$timepoint == "pre"], 
                 paired = TRUE)
@@ -349,6 +386,7 @@ d_t_dependent <- function(data, hedges_correction = TRUE, r = 0) { # assumes a c
 # if a Welches' t test, the conversion of df to N is imprecise, affecting the CIs.
 # assumes that 'data' contains columns named score (numeric) and timepoint (factor with two levels)
 d_t_independent <- function(data, hedges_correction = TRUE){
+  require(dplyr)
   
   fit <- t.test(score ~ timepoint, 
                 data = data,
@@ -375,7 +413,6 @@ d_t_independent <- function(data, hedges_correction = TRUE){
 
 
 multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE){
-
   
   # Check if 'data' is a dataframe or tibble
   if (!is.data.frame(data) && !is_tibble(data)) {
@@ -402,8 +439,8 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
   if (nlevels(data$timepoint) != 2) {
     stop("The 'timepoint' column must have exactly two levels.")
   }
-
-    results <- 
+  
+  results <- 
     bind_rows(
       effectsize::cohens_d(score ~ timepoint, data = data, pooled_sd = TRUE, adjust = hedges_correction) |> 
         as_tibble() |> 
@@ -492,21 +529,21 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
       #          implementation = "{effectsize}",
       #          hedges_correction = hedges_correction) |>
       #   dplyr::select(implementation, type, hedges_correction, estimate = Hedges_g, ci_lower = CI_low, ci_upper = CI_high),
-
+      
       effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "d", adjust = hedges_correction) |> 
         as_tibble() |> 
         mutate(type = "d_s_withinCIs",
                implementation = "{effectsize}",
                hedges_correction = hedges_correction) |>
         dplyr::select(implementation, type, hedges_correction, estimate = Cohens_d, ci_lower = CI_low, ci_upper = CI_high),
-
+      
       effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "rm", adjust = hedges_correction) |> 
         as_tibble() |> 
         mutate(type = "d_rm",
                implementation = "{effectsize}",
                hedges_correction = hedges_correction) |>
         dplyr::select(implementation, type, hedges_correction, estimate = d_rm, ci_lower = CI_low, ci_upper = CI_high),
-    
+      
       effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "av", adjust = hedges_correction) |> 
         as_tibble() |> 
         mutate(type = "d_av",
@@ -541,7 +578,7 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
                implementation = "{effectsize}",
                hedges_correction = hedges_correction) |>
         dplyr::select(implementation, type, hedges_correction, estimate = d_z, ci_lower = CI_low, ci_upper = CI_high),
-    
+      
       # this provides the same estimate as d_s
       d_t_independent(data = data, hedges_correction = hedges_correction) |>
         as_tibble() |>
@@ -577,25 +614,23 @@ mean_pre <- 0 # mean for pre-test scores
 mean_post <- 0.132 # mean for pre-test scores
 sd_pre <- 1 # SD pre-test scores
 sd_post <- 1 # SD pre-test scores
-
-# simulate data 
 r_pre_post <- 0.8 # correlation between pre and post
 
-data_simulated_high_r <- 
+# simulate data 
+data_simulated_sim_1 <- 
   faux::rnorm_multi(n, 
-              mu = c(pre = mean_pre, post = mean_post), 
-              sd = c(sd_pre, sd_post), 
-              r = matrix(c(1,          r_pre_post, 
-                           r_pre_post,         1), 
-                         ncol = 2)) |>
+                    mu = c(pre = mean_pre, post = mean_post), 
+                    sd = c(sd_pre, sd_post), 
+                    r = matrix(c(1,          r_pre_post, 
+                                 r_pre_post,         1), 
+                               ncol = 2)) |>
   rownames_to_column(var = "id") |>
   pivot_longer(cols = -id,
                names_to = "timepoint",
                values_to = "score") |>
   mutate(timepoint = fct_relevel(timepoint, "post", "pre")) # ensure that factor levels are the in the correct order, especially for d_b
 
-res_high <- 
-  data_simulated_high_r |>
+results_sim_1 <- data_simulated_sim_1 |>
   multiple_cohens_ds_for_dependent_data() |>
   select(-hedges_correction) |>
   mutate(ci_width = ci_upper - ci_lower,
@@ -603,20 +638,62 @@ res_high <-
                         (ci_lower < 0 & ci_upper < 0) |
                         (is.na(ci_lower) & is.na(ci_upper)), TRUE, FALSE))
 
-res_high |>
+results_sim_1 |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
   knitr::kable() 
 
-ggplot(res_high, aes(paste(type, implementation), estimate, color = sig)) + 
+p_sim_1_all <- ggplot(results_sim_1, aes(paste(type, implementation), estimate, color = sig)) + 
   geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
-  geom_point(position = position_dodge(width = 0.5)) +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), size = 0.8) +
+  geom_point(position = position_dodge(width = 0.5), size = 1.8) +
+  scale_y_continuous(breaks = seq(-2, 2, 0.1)) +
   coord_flip() +
   theme_linedraw() +
   xlab("") +
   ylab("Cohen's d") +
-  scale_color_viridis_d(begin = 0.3, end = 0.7, option = "magma") +
-  theme(legend.position = "none")
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+
+p_sim_1_all
+
+ggsave(filename = "p_sim_1_all.pdf",
+       plot = p_sim_1_all,
+       path = "../plots/",
+       device = "pdf",
+       width = 6,
+       height = 6)
+
+```
+
+### Subset 
+
+```{r}
+
+p_sim_1 <- results_sim_1 |>
+  filter(!implementation %in% c("{lsr}", "{MBESS}", "{psych}", "{esc}", "{metafor}", "{effsize}", "[custom]") &
+           !stringr::str_detect(type, "(alt)")) |>
+  ggplot(aes(paste(type, implementation), estimate, color = sig)) + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), size = 0.8) +
+  geom_point(position = position_dodge(width = 0.5), size = 1.8) +
+  scale_y_continuous(breaks = seq(-2, 2, 0.1)) +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("") +
+  ylab("Cohen's d") +
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+
+p_sim_1
+
+ggsave(filename = "p_sim_1.pdf",
+       plot = p_sim_1,
+       path = "../plots/",
+       device = "pdf",
+       width = 6,
+       height = 3)
 
 ```
 
@@ -632,25 +709,23 @@ mean_pre <- 0 # mean for pre-test scores
 mean_post <- 0.2 # mean for pre-test scores
 sd_pre <- 0.5 # SD pre-test scores
 sd_post <- 1.5 # SD pre-test scores
-
-# simulate data 
 r_pre_post <- 0.5 # correlation between pre and post
 
-data_simulated_high_r <- 
+# simulate data 
+data_simulated_sim_2 <- 
   faux::rnorm_multi(n, 
-              mu = c(pre = mean_pre, post = mean_post), 
-              sd = c(sd_pre, sd_post), 
-              r = matrix(c(1,          r_pre_post, 
-                           r_pre_post,         1), 
-                         ncol = 2)) |>
+                    mu = c(pre = mean_pre, post = mean_post), 
+                    sd = c(sd_pre, sd_post), 
+                    r = matrix(c(1,          r_pre_post, 
+                                 r_pre_post,         1), 
+                               ncol = 2)) |>
   rownames_to_column(var = "id") |>
   pivot_longer(cols = -id,
                names_to = "timepoint",
                values_to = "score") |>
   mutate(timepoint = fct_relevel(timepoint, "post", "pre")) # ensure that factor levels are the in the correct order, especially for d_b
 
-res_high <- 
-  data_simulated_high_r |>
+results_sim_2 <- data_simulated_sim_2 |>
   multiple_cohens_ds_for_dependent_data() |>
   select(-hedges_correction) |>
   mutate(ci_width = ci_upper - ci_lower,
@@ -658,11 +733,11 @@ res_high <-
                         (ci_lower < 0 & ci_upper < 0) |
                         (is.na(ci_lower) & is.na(ci_upper)), TRUE, FALSE))
 
-res_high |>
+results_sim_2 |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
   knitr::kable()
 
-ggplot(res_high, aes(paste(type, implementation), estimate, color = sig)) + 
+ggplot(results_sim_2, aes(paste(type, implementation), estimate, color = sig)) + 
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
   geom_point(position = position_dodge(width = 0.5)) +
@@ -670,8 +745,39 @@ ggplot(res_high, aes(paste(type, implementation), estimate, color = sig)) +
   theme_linedraw() +
   xlab("") +
   ylab("Cohen's d") +
-  scale_color_viridis_d(begin = 0.3, end = 0.7, option = "magma") +
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
   theme(legend.position = "none")
+
+```
+
+### Subset 
+
+```{r}
+
+p_sim_2 <- results_sim_2 |>
+  filter(!implementation %in% c("{lsr}", "{MBESS}", "{psych}", "{esc}", "{metafor}", "{effsize}", "[custom]") &
+           !stringr::str_detect(type, "(alt)")) |>
+  ggplot(aes(paste(type, implementation), estimate, color = sig)) + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), size = 0.8) +
+  geom_point(position = position_dodge(width = 0.5), size = 1.8) +
+  scale_y_continuous(breaks = seq(-2, 2, 0.1)) +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("") +
+  ylab("Cohen's d") +
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+
+p_sim_2
+
+ggsave(filename = "p_sim_2.pdf",
+       plot = p_sim_2,
+       path = "../plots/",
+       device = "pdf",
+       width = 6,
+       height = 3)
 
 ```
 
@@ -691,13 +797,13 @@ sd_post <- 1 # SD pre-test scores
 # simulate data 
 r_pre_post <- 0.8 # correlation between pre and post
 
-data_simulated_high_r <- 
+data_simulated_sim_3a <- 
   faux::rnorm_multi(n, 
-              mu = c(pre = mean_pre, post = mean_post), 
-              sd = c(sd_pre, sd_post), 
-              r = matrix(c(1,          r_pre_post, 
-                           r_pre_post,         1), 
-                         ncol = 2)) |>
+                    mu = c(pre = mean_pre, post = mean_post), 
+                    sd = c(sd_pre, sd_post),
+                    r = matrix(c(1,          r_pre_post, 
+                                 r_pre_post,         1), 
+                               ncol = 2)) |>
   rownames_to_column(var = "id") |>
   pivot_longer(cols = -id,
                names_to = "timepoint",
@@ -707,13 +813,13 @@ data_simulated_high_r <-
 
 r_pre_post <- 0 # correlation between pre and post
 
-data_simulated_low_r <- 
+data_simulated_sim_3b <- 
   faux::rnorm_multi(n, 
-              mu = c(pre = mean_pre, post = mean_post), 
-              sd = c(sd_pre, sd_post), 
-              r = matrix(c(1,          r_pre_post, 
-                           r_pre_post,         1), 
-                         ncol = 2)) |>
+                    mu = c(pre = mean_pre, post = mean_post), 
+                    sd = c(sd_pre, sd_post), 
+                    r = matrix(c(1,          r_pre_post, 
+                                 r_pre_post,         1), 
+                               ncol = 2)) |>
   rownames_to_column(var = "id") |>
   pivot_longer(cols = -id,
                names_to = "timepoint",
@@ -721,8 +827,7 @@ data_simulated_low_r <-
   mutate(timepoint = fct_relevel(timepoint, "post", "pre")) # ensure that factor levels are the in the correct order, especially for d_b
 
 
-res_low <- 
-  data_simulated_low_r |>
+results_simulation_3a <- data_simulated_sim_3a |>
   multiple_cohens_ds_for_dependent_data() |>
   dplyr::select(-hedges_correction) |>
   mutate(ci_width = ci_upper - ci_lower,
@@ -730,8 +835,7 @@ res_low <-
                         (ci_lower < 0 & ci_upper < 0) |
                         (is.na(ci_lower) & is.na(ci_upper)), TRUE, FALSE))
 
-res_high <- 
-  data_simulated_high_r |>
+results_simulation_3b <- data_simulated_sim_3b |>
   multiple_cohens_ds_for_dependent_data() |>
   select(-hedges_correction) |>
   mutate(ci_width = ci_upper - ci_lower,
@@ -740,16 +844,16 @@ res_high <-
                         (is.na(ci_lower) & is.na(ci_upper)), TRUE, FALSE))
 
 
-res_low |>
+results_simulation_3a |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
   knitr::kable()
 
-res_high |>
+results_simulation_3b |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
   knitr::kable() 
 
 
-ggplot(res_low, aes(paste(type, implementation), estimate, color = sig)) + # fct_reorder(type, estimate), estimate
+ggplot(results_simulation_3a, aes(paste(type, implementation), estimate, color = sig)) + # fct_reorder(type, estimate), estimate
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
   geom_point(position = position_dodge(width = 0.5)) +
@@ -757,10 +861,11 @@ ggplot(res_low, aes(paste(type, implementation), estimate, color = sig)) + # fct
   theme_linedraw() +
   xlab("") +
   ylab("Cohen's d") +
-  scale_color_viridis_d(begin = 0.3, end = 0.7, option = "magma") +
-  theme(legend.position = "none")
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
 
-ggplot(res_high, aes(paste(type, implementation), estimate, color = sig)) + # fct_reorder(type, estimate), estimate
+ggplot(results_simulation_3b, aes(paste(type, implementation), estimate, color = sig)) + # fct_reorder(type, estimate), estimate
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
   geom_point(position = position_dodge(width = 0.5)) +
@@ -768,8 +873,57 @@ ggplot(res_high, aes(paste(type, implementation), estimate, color = sig)) + # fc
   theme_linedraw() +
   xlab("") +
   ylab("Cohen's d") +
-  scale_color_viridis_d(begin = 0.3, end = 0.7, option = "magma") +
-  theme(legend.position = "none")
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+
+```
+
+### Subset 
+
+```{r}
+
+p_sim_3a <- results_simulation_3a |>
+  filter(!implementation %in% c("{lsr}", "{MBESS}", "{psych}", "{esc}", "{metafor}", "{effsize}", "[custom]") &
+           !stringr::str_detect(type, "(alt)")) |>
+  ggplot(aes(paste(type, implementation), estimate, color = sig)) + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), size = 0.8) +
+  geom_point(position = position_dodge(width = 0.5), size = 1.8) +
+  scale_y_continuous(breaks = seq(-2, 2, 0.2)) +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("") +
+  ylab("Cohen's d") +
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+
+p_sim_3a
+
+ggsave(filename = "p_sim_3a.pdf",
+       plot = p_sim_3a,
+       path = "../plots/",
+       device = "pdf",
+       width = 6,
+       height = 3)
+
+
+results_simulation_3b |>
+  filter(!implementation %in% c("{lsr}", "{MBESS}", "{psych}", "{esc}", "{metafor}", "{effsize}", "[custom]") &
+           !stringr::str_detect(type, "(alt)")) |>
+  ggplot(aes(paste(type, implementation), estimate, color = sig)) + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  scale_y_continuous(breaks = seq(-2, 2, 0.2)) +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("") +
+  ylab("Cohen's d") +
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
 
 ```
 
@@ -777,7 +931,7 @@ ggplot(res_high, aes(paste(type, implementation), estimate, color = sig)) + # fc
 
 ```{r}
 
-res_high |>
+results_simulation_3a |>
   mutate(type_implementation = paste(type, implementation),
          type_implementation = fct_reorder(type_implementation, estimate)) |>
   ggplot(aes(type_implementation, estimate)) + 
@@ -789,7 +943,7 @@ res_high |>
   xlab("") +
   ylab("Cohen's d")
 
-res_high |>
+results_simulation_3a |>
   drop_na() |>
   mutate(type_implementation = paste(type, implementation),
          type_implementation = fct_reorder(type_implementation, ci_width)) |>
@@ -808,20 +962,28 @@ res_high |>
 
 ```{r}
 
-res_high |>
+results_simulation_3a |>
   filter(implementation == "{effectsize}") |>
   ggplot(aes(type, estimate, color = sig)) + # fct_reorder(type, estimate), estimate
   geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
-  geom_point(position = position_dodge(width = 0.5)) +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), size = 0.8) +
+  geom_point(position = position_dodge(width = 0.5), size = 1.8) +
+  scale_y_continuous(breaks = seq(-2, 2, 0.2)) +
   coord_flip() +
   theme_linedraw() +
   xlab("") +
   ylab("Cohen's d") +
-  scale_color_viridis_d(begin = 0.3, end = 0.7, option = "magma") +
-  theme(legend.position = "none")
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
 
 ```
 
+# Session info
 
+```{r}
+
+sessionInfo()
+
+```
 
