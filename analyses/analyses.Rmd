@@ -30,21 +30,19 @@ knitr::opts_chunk$set(message = FALSE,
 
 # Dependencies 
 
+N.B.: to ensure full computational reproducibility, R version 4.3.3 should be used. 
+
 ```{r}
 
-library(tidyverse)
-library(effectsize)
-library(faux)
-library(janitor)
-library(knitr)
-library(kableExtra)
-library(rstatix)
-library(psych)
-library(MBESS)
-library(lsr)
-library(metafor)
-library(esc)
-library(esci)
+library(groundhog)
+groundhog_day = "2024-04-07"
+packages = c("effectsize","faux","janitor",
+              "rstatix", "effsize",
+             "psych", "MBESS", "lsr",
+             "metafor", "esc", "esci",
+             "dplyr", "tidyr", "tibble",
+             "forcats", "ggplot2")
+groundhog.library(packages, groundhog_day)
 
 ```
 
@@ -58,8 +56,7 @@ library(esci)
 
 cohens_d_s_metafor <- function(data){
   # nb always applies hedges correction
-  require(metafor)
-  
+
   summaries <- data_simulated_high_r |>
     group_by(timepoint) |>
     summarize(mean = mean(score),
@@ -87,8 +84,7 @@ cohens_d_s_metafor <- function(data){
 
 cohens_d_s_esc <- function(data, hedges_correction = TRUE){
   
-  require(esc)
-  
+
   summaries <- data |>
     group_by(timepoint) |>
     summarize(mean = mean(score),
@@ -114,8 +110,7 @@ cohens_d_s_esc <- function(data, hedges_correction = TRUE){
 
 cohens_d_z_esc <- function(data, hedges_correction = TRUE){
   
-  require(esc)
-  
+
   summaries <- data |>
     group_by(timepoint) |>
     summarize(mean = mean(score),
@@ -148,8 +143,7 @@ cohens_d_z_esc <- function(data, hedges_correction = TRUE){
 
 cohens_d_s_rstatix <- function(data, hedges_correction = TRUE){
 
-  require(rstatix)
-  
+
   fit <- rstatix::cohens_d(formula = score ~ timepoint,
                            data = data,
                            comparisons = list(c("pre", "post")),
@@ -170,8 +164,7 @@ cohens_d_s_rstatix <- function(data, hedges_correction = TRUE){
 
 cohens_d_z_rstatix <- function(data, hedges_correction = TRUE){
 
-  require(rstatix)
-  
+
   fit <- rstatix::cohens_d(formula = score ~ timepoint,
                            data = data,
                            comparisons = list(c("pre", "post")),
@@ -192,7 +185,6 @@ cohens_d_z_rstatix <- function(data, hedges_correction = TRUE){
 
 # esci used to have a within subjects d in 2020 but now doesn't? and its not in the git history
 cohens_d_s_esci <- function(data, hedges_correction = TRUE){
-  require(esci)
 
   summaries <- data |>
     group_by(timepoint) |>
@@ -217,8 +209,7 @@ cohens_d_s_esci <- function(data, hedges_correction = TRUE){
 }
 
 cohens_d_s_effsize <- function(data, hedges_correction = TRUE){
-  require(effsize)
-  
+
   fit <- effsize::cohen.d(score ~ timepoint, 
                           paired = FALSE,
                           pooled = TRUE,
@@ -235,7 +226,6 @@ cohens_d_s_effsize <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_dep_effsize <- function(data, hedges_correction = TRUE){
-  require(effsize)
 
   fit <- effsize::cohen.d(score ~ timepoint | Subject(id), 
                           paired = TRUE,
@@ -254,7 +244,6 @@ cohens_d_dep_effsize <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_s_psych <- function(data, hedges_correction = TRUE){
-  require(psych)
 
   fit <- psych::cohen.d(score ~ timepoint,
                         data = data) 
@@ -270,7 +259,6 @@ cohens_d_s_psych <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_s_mbess <- function(data, hedges_correction = TRUE){
-  require(MBESS)
 
   d <- MBESS::smd(Group.1 = data |> filter(timepoint == "post") |> pull(score), 
                   Group.2 = data |> filter(timepoint == "pre") |> pull(score),
@@ -293,8 +281,7 @@ cohens_d_s_mbess <- function(data, hedges_correction = TRUE){
 
 
 cohens_d_s_lsr <- function(data){
-  require(lsr)
-  
+
   # lsr::cohenD returns the absolute value of cohen's d, ie always positive values. fix this here to bring it in line with other packages' functions.
   mean_pre <- data |> dplyr::filter(timepoint == "pre") |> summarize(mean = mean(score))
   mean_post <- data |> dplyr::filter(timepoint == "post") |> summarize(mean = mean(score))
@@ -312,7 +299,6 @@ cohens_d_s_lsr <- function(data){
 
 
 cohens_d_dep_lsr <- function(data){
-  require(lsr)
 
   # lsr::cohenD returns the absolute value of cohen's d, ie always positive values. fix this here to bring it in line with other packages' functions.
   mean_pre <- data |> dplyr::filter(timepoint == "pre") |> summarize(mean = mean(score))
@@ -335,8 +321,7 @@ cohens_d_dep_lsr <- function(data){
 # assumes a two sided Student's t test with alpha = .05
 # by default, assumes correlation between timepoints is 0. larger values will narrow the CIs but leave the estimate unchanged. so, default result is the worst case precision.
 d_t_dependent <- function(data, hedges_correction = TRUE, r = 0) { # assumes a correlation of 0 for simplicity
-  require(dplyr)
-  
+
   fit <- t.test(data$score[data$timepoint == "post"],
                 data$score[data$timepoint == "pre"], 
                 paired = TRUE)
@@ -390,9 +375,7 @@ d_t_independent <- function(data, hedges_correction = TRUE){
 
 
 multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE){
-  require(dplyr)
-  require(tidyr)
-  require(effectsize)
+
   
   # Check if 'data' is a dataframe or tibble
   if (!is.data.frame(data) && !is_tibble(data)) {
@@ -419,8 +402,8 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
   if (nlevels(data$timepoint) != 2) {
     stop("The 'timepoint' column must have exactly two levels.")
   }
-  
-  results <- 
+
+    results <- 
     bind_rows(
       effectsize::cohens_d(score ~ timepoint, data = data, pooled_sd = TRUE, adjust = hedges_correction) |> 
         as_tibble() |> 
@@ -599,7 +582,7 @@ sd_post <- 1 # SD pre-test scores
 r_pre_post <- 0.8 # correlation between pre and post
 
 data_simulated_high_r <- 
-  rnorm_multi(n, 
+  faux::rnorm_multi(n, 
               mu = c(pre = mean_pre, post = mean_post), 
               sd = c(sd_pre, sd_post), 
               r = matrix(c(1,          r_pre_post, 
@@ -622,8 +605,7 @@ res_high <-
 
 res_high |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
-  kable() |>
-  kable_classic(full_width = FALSE)
+  knitr::kable() 
 
 ggplot(res_high, aes(paste(type, implementation), estimate, color = sig)) + 
   geom_hline(yintercept = 0, linetype = "dashed") +
@@ -655,7 +637,7 @@ sd_post <- 1.5 # SD pre-test scores
 r_pre_post <- 0.5 # correlation between pre and post
 
 data_simulated_high_r <- 
-  rnorm_multi(n, 
+  faux::rnorm_multi(n, 
               mu = c(pre = mean_pre, post = mean_post), 
               sd = c(sd_pre, sd_post), 
               r = matrix(c(1,          r_pre_post, 
@@ -678,8 +660,7 @@ res_high <-
 
 res_high |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
-  kable() |>
-  kable_classic(full_width = FALSE)
+  knitr::kable()
 
 ggplot(res_high, aes(paste(type, implementation), estimate, color = sig)) + 
   geom_hline(yintercept = 0, linetype = "dashed") +
@@ -711,7 +692,7 @@ sd_post <- 1 # SD pre-test scores
 r_pre_post <- 0.8 # correlation between pre and post
 
 data_simulated_high_r <- 
-  rnorm_multi(n, 
+  faux::rnorm_multi(n, 
               mu = c(pre = mean_pre, post = mean_post), 
               sd = c(sd_pre, sd_post), 
               r = matrix(c(1,          r_pre_post, 
@@ -727,7 +708,7 @@ data_simulated_high_r <-
 r_pre_post <- 0 # correlation between pre and post
 
 data_simulated_low_r <- 
-  rnorm_multi(n, 
+  faux::rnorm_multi(n, 
               mu = c(pre = mean_pre, post = mean_post), 
               sd = c(sd_pre, sd_post), 
               r = matrix(c(1,          r_pre_post, 
@@ -761,13 +742,11 @@ res_high <-
 
 res_low |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
-  kable() |>
-  kable_classic(full_width = FALSE)
+  knitr::kable()
 
 res_high |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
-  kable() |>
-  kable_classic(full_width = FALSE)
+  knitr::kable() 
 
 
 ggplot(res_low, aes(paste(type, implementation), estimate, color = sig)) + # fct_reorder(type, estimate), estimate
