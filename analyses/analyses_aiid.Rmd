@@ -11,6 +11,11 @@ output:
     toc_float: yes
 ---
 
+# TODO
+
+- rstatix effect sizes aren't included as they use bootstrapping, and in this context that would have taken a long time to run.
+- the d from test statistic effect sizes aren't included as they threw errors and i didn't get around to bug fixing them.
+
 
 ```{r include=FALSE}
 
