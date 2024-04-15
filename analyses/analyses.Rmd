@@ -432,6 +432,10 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
     stop("The 'timepoint' column must be of type factor or character.")
   }
   
+  # some pivots below assume only these columns are present
+  data <- data |>
+    select(id, timepoint, score)
+  
   # Convert 'timepoint' to factor if it's not already
   data$timepoint <- as.factor(data$timepoint)
   
@@ -609,9 +613,9 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
 set.seed(42) 
 
 # parameters
-n <- 40 # number of participants
+n <- 1000 # number of participants
 mean_pre <- 0 # mean for pre-test scores
-mean_post <- 0.132 # mean for pre-test scores
+mean_post <- 0.2 # mean for pre-test scores
 sd_pre <- 1 # SD pre-test scores
 sd_post <- 1 # SD pre-test scores
 r_pre_post <- 0.8 # correlation between pre and post
@@ -640,6 +644,15 @@ results_sim_1 <- data_simulated_sim_1 |>
 
 results_sim_1 |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
+  knitr::kable() 
+
+tibble(n,
+       mean_pre,
+       mean_post,
+       sd_pre,
+       sd_post,
+       r_pre_post) |>
+  pivot_longer(cols = everything()) |>
   knitr::kable() 
 
 p_sim_1_all <- ggplot(results_sim_1, aes(paste(type, implementation), estimate, color = sig)) + 
@@ -704,7 +717,7 @@ ggsave(filename = "p_sim_1.pdf",
 set.seed(42) 
 
 # parameters
-n <- 65 # number of participants
+n <- 1000 # number of participants
 mean_pre <- 0 # mean for pre-test scores
 mean_post <- 0.2 # mean for pre-test scores
 sd_pre <- 0.5 # SD pre-test scores
@@ -736,6 +749,15 @@ results_sim_2 <- data_simulated_sim_2 |>
 results_sim_2 |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
   knitr::kable()
+
+tibble(n,
+       mean_pre,
+       mean_post,
+       sd_pre,
+       sd_post,
+       r_pre_post) |>
+  pivot_longer(cols = everything()) |>
+  knitr::kable() 
 
 ggplot(results_sim_2, aes(paste(type, implementation), estimate, color = sig)) + 
   geom_hline(yintercept = 0, linetype = "dashed") +
@@ -788,9 +810,9 @@ ggsave(filename = "p_sim_2.pdf",
 set.seed(42) 
 
 # parameters
-n <- 40 # number of participants
+n <- 1000 # number of participants
 mean_pre <- 0 # mean for pre-test scores
-mean_post <- 0.7 # mean for pre-test scores
+mean_post <- 0.2 # mean for pre-test scores
 sd_pre <- 1 # SD pre-test scores
 sd_post <- 1 # SD pre-test scores
 
@@ -811,14 +833,14 @@ data_simulated_sim_3a <-
   mutate(timepoint = fct_relevel(timepoint, "post", "pre")) # ensure that factor levels are the in the correct order, especially for d_b
 
 
-r_pre_post <- 0 # correlation between pre and post
+r_pre_post_2 <- 0.2 # correlation between pre and post
 
 data_simulated_sim_3b <- 
   faux::rnorm_multi(n, 
                     mu = c(pre = mean_pre, post = mean_post), 
                     sd = c(sd_pre, sd_post), 
-                    r = matrix(c(1,          r_pre_post, 
-                                 r_pre_post,         1), 
+                    r = matrix(c(1,            r_pre_post_2, 
+                                 r_pre_post_2,           1), 
                                ncol = 2)) |>
   rownames_to_column(var = "id") |>
   pivot_longer(cols = -id,
@@ -851,6 +873,20 @@ results_simulation_3a |>
 results_simulation_3b |>
   mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
   knitr::kable() 
+
+
+tibble(sim = c(1, 2),
+       n,
+       mean_pre,
+       mean_post,
+       sd_pre,
+       sd_post,
+       r_pre_post = c(r_pre_post, r_pre_post_2)) |>
+  pivot_longer(cols = -sim) |>
+  pivot_wider(names_from = sim, 
+              values_from = value,
+              names_prefix = "sim_") |>
+  knitr::kable()
 
 
 ggplot(results_simulation_3a, aes(paste(type, implementation), estimate, color = sig)) + # fct_reorder(type, estimate), estimate
@@ -976,6 +1012,110 @@ results_simulation_3a |>
   scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
   theme(legend.position = "none",
         panel.grid.minor = element_blank())
+
+```
+
+## Sim 4
+
+```{r}
+
+set.seed(42) 
+
+# parameters
+n <- 1000 # number of participants
+mean_pre <- 1.5 # mean for pre-test scores
+mean_post <- 6.5 # mean for pre-test scores
+sd_pre <- 1.5 # SD pre-test scores
+sd_post <- 1.5 # SD pre-test scores
+r_pre_post <- -0.75 # correlation between pre and post
+
+# simulate data 
+data_simulated_sim_4 <- 
+  faux::rnorm_multi(n, 
+                    mu = c(pre = mean_pre, post = mean_post), 
+                    sd = c(sd_pre, sd_post), 
+                    r = matrix(c(1,          r_pre_post, 
+                                 r_pre_post,         1), 
+                               ncol = 2)) |>
+  rownames_to_column(var = "id") |>
+  pivot_longer(cols = -id,
+               names_to = "timepoint",
+               values_to = "score") |>
+  mutate(timepoint = fct_relevel(timepoint, "post", "pre")) # ensure that factor levels are the in the correct order, especially for d_b
+
+results_sim_4 <- data_simulated_sim_4 |>
+  multiple_cohens_ds_for_dependent_data() |>
+  select(-hedges_correction) |>
+  mutate(ci_width = ci_upper - ci_lower,
+         sig = ifelse((ci_lower > 0 & ci_upper > 0) |
+                        (ci_lower < 0 & ci_upper < 0) |
+                        (is.na(ci_lower) & is.na(ci_upper)), TRUE, FALSE))
+
+results_sim_4 |>
+  mutate_if(is.numeric, janitor::round_half_up, digits = 3) |>
+  knitr::kable() 
+
+tibble(n,
+       mean_pre,
+       mean_post,
+       sd_pre,
+       sd_post,
+       r_pre_post) |>
+  pivot_longer(cols = everything()) |>
+  knitr::kable() 
+
+p_sim_4_all <- ggplot(results_sim_4, aes(paste(type, implementation), estimate, color = sig)) + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), size = 0.8) +
+  geom_point(position = position_dodge(width = 0.5), size = 1.8) +
+  scale_y_continuous(breaks = seq(-12, 12, 1)) +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("") +
+  ylab("Cohen's d") +
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+
+p_sim_4_all
+
+# ggsave(filename = "p_sim_4_all.pdf",
+#        plot = p_sim_4_all,
+#        path = "../plots/",
+#        device = "pdf",
+#        width = 6,
+#        height = 6)
+
+```
+
+### Subset 
+
+```{r}
+
+p_sim_4 <- results_sim_4 |>
+  filter(!implementation %in% c("{lsr}", "{MBESS}", "{psych}", "{esc}", "{metafor}", "{effsize}", "[custom]") &
+           !stringr::str_detect(type, "(alt)")) |>
+  ggplot(aes(paste(type, implementation), estimate, color = sig)) + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_linerange(aes(ymin = ci_lower, ymax = ci_upper), size = 0.8) +
+  geom_point(position = position_dodge(width = 0.5), size = 1.8) +
+  scale_y_continuous(breaks = seq(-12, 12, 1)) +
+  coord_flip() +
+  theme_linedraw() +
+  xlab("") +
+  ylab("Cohen's d") +
+  scale_color_viridis_d(begin = 0.2, end = 0.5, option = "D") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+
+p_sim_4
+
+# ggsave(filename = "p_sim_4.pdf",
+#        plot = p_sim_4,
+#        path = "../plots/",
+#        device = "pdf",
+#        width = 6,
+#        height = 3)
 
 ```
 
