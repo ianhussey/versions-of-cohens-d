@@ -22,6 +22,8 @@ output:
 knitr::opts_chunk$set(message = FALSE, 
                       warning = FALSE)
 
+options(scipen=999)
+
 ```
 
 # Dependencies 
@@ -40,7 +42,8 @@ packages = c("effectsize","faux","janitor",
              "psych", "MBESS", "lsr",
              "metafor", "esc", "esci",
              "dplyr", "tidyr", "tibble",
-             "forcats", "ggplot2", "stringr")
+             "forcats", "ggplot2", "stringr", 
+             "purrr")
 
 groundhog.library(packages, groundhog_day)
 
@@ -272,7 +275,7 @@ cohens_d_s_esci <- function(data, hedges_correction = TRUE){
   fit <- esci::CI_smd_ind_contrast(means = summaries$mean,
                                    sds = summaries$sd,
                                    ns = summaries$n,
-                                   contrast = c(+.5, -.5),
+                                   contrast = c(+1, -1),
                                    conf_level = 0.95,
                                    assume_equal_variance = FALSE,
                                    correct_bias = hedges_correction)
