@@ -12,6 +12,18 @@ output:
     toc_float: yes
 ---
 
+# TODO
+
+- add explanatory notes about which metrics have more and less desirable properties, what desirable properties are, and which metrics should agree etc.
+- determine what the remaining metrics are doing under the hood, ie the ones labelled '???'
+- obtain code for cohens_dav from {esci} for dependent data? It used to exist.
+
+# Sources
+
+My interest in this dates back to a blog post by Westfall (2016), originally found at http://jakewestfall.org/blog/index.php/2016/03/25/five-different-cohens-d-statistics-for-within-subject-designs/ but the website is now down. A copy is maintained at https://imaging.mrc-cbu.cam.ac.uk/statswiki/FAQ/tdunpaired as of 2024. The easystats R package {effectsize} was recently updated to include implementations of many different within-subjects Cohen's *d* variants (see [here](https://easystats.github.io/effectsize/reference/repeated_measures_d.html)), which make me think to revisit this issue to see what other variants and implementations exist.
+
+Note that I found what appears to be an error in Jake's code that I don't see documented elsewhere: Jake specified that $d_t$ could be calculated using `d_t = t_stat * sqrt(2/n)`, where t_stat is the t statistic from a Student's t test. This math agrees with Lakens (2013) equation 2, i.e., `d_t = t_stat * sqrt(1/n1 + 1/n2)`. However, this applies only to an independent t-test - Jake's original blog misapplies the formula for an indepenent t-test to a dependent. The correct formula for a dependent t-test seems to be `d_t = t_stat / sqrt(n)`. 
+
 # Hypothetical study
 
 Imagine that, like Balcetis & Dunning (2010), you want to answer a very simple question: how much do people prefer chocolate over poop?
