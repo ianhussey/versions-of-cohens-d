@@ -50,15 +50,15 @@ cohens_d_s_mbess <- function(data, hedges_correction = TRUE){
                   Group.2 = data |> filter(timepoint == "stimulus1") |> pull(score),
                   Unbiased = hedges_correction)
   
-  t <- t.test(score ~ timepoint, data = data)$statistic
+  #t <- t.test(score ~ timepoint, data = data)$statistic
   
-  cis <- ci.smd(ncp = t,
-                #smd = d, 
+  cis <- ci.smd(#ncp = t,
+                smd = d, 
                 n.1 = data |> filter(timepoint == "stimulus2") |> pull(score) |> length(), 
                 n.2 = data |> filter(timepoint == "stimulus1") |> pull(score) |> length())
   
   res <- 
-    data.frame(estimate = d,
+    data.frame(estimate = cis$smd,
                ci_lower = cis$Lower.Conf.Limit.smd,
                ci_upper = cis$Upper.Conf.Limit.smd) 
   
@@ -104,7 +104,6 @@ cohens_d_s_psych <- function(data, hedges_correction = TRUE){
   
   fit <- psych::cohen.d(score ~ timepoint,
                         data = data) 
-  psych::
   
   res <- 
     tibble(estimate = ifelse(hedges_correction, fit$hedges.g[2]*-1, fit$cohen.d[2]*-1),
@@ -114,7 +113,7 @@ cohens_d_s_psych <- function(data, hedges_correction = TRUE){
   return(res)
 }
 
-cohens_d_s_lsr <- function(data){
+cohens_d_s_lsr <- function(data, hedges_correction = TRUE){
   require(dplyr)
   require(tibble)
   require(lsr)
@@ -123,8 +122,11 @@ cohens_d_s_lsr <- function(data){
   mean_stimulus1 <- data |> dplyr::filter(timepoint == "stimulus1") |> summarize(mean = mean(score))
   mean_stimulus2 <- data |> dplyr::filter(timepoint == "stimulus2") |> summarize(mean = mean(score))
   
+  method <- ifelse(hedges_correction, "corrected", "pooled")
+  
   d <- lsr::cohensD(score ~ timepoint,
-                    data = data, method = "corrected") 
+                    data = data, 
+                    method = method) 
   
   res <- 
     tibble(estimate = as.numeric(ifelse(mean_stimulus1 < mean_stimulus2, d, d * -1)),
@@ -288,7 +290,7 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
       cohens_d_s_lsr(data = data) |> 
         mutate(type = "d_s",
                implementation = "{lsr}",
-               hedges_correction = FALSE) |> # lsr doesn't have an option for hedges corrections
+               hedges_correction = hedges_correction) |> # lsr doesn't have an option for hedges corrections
         dplyr::select(implementation, type, hedges_correction, estimate, ci_lower, ci_upper)
 )
 
@@ -307,7 +309,7 @@ plot_different_dependent_cohens_ds <- function(parameters){
     pivot_longer(cols = -id,
                  names_to = "timepoint",
                  values_to = "score") |>
-    mutate(timepoint = fct_relevel(timepoint, "stimulus2", "stimulus1")) # ensure that factor levels are the in the correct order, especially for d_b
+    mutate(timepoint = forcats::fct_relevel(timepoint, "stimulus2", "stimulus1")) # ensure that factor levels are the in the correct order, especially for d_b
   
   simulation_results <- data_for_simulations |>
     multiple_cohens_ds_for_dependent_data() |>

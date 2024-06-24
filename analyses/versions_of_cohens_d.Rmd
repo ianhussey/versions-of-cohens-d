@@ -14,24 +14,24 @@ output:
 
 # TODO
 
-- add explanatory notes about which metrics have more and less desirable properties, what desirable properties are, and which metrics should agree etc.
-- determine what the remaining metrics are doing under the hood, ie the ones labelled '???'
-- obtain code for cohens_dav from {esci} for dependent data? It used to exist.
+-   add explanatory notes about which metrics have more and less desirable properties, what desirable properties are, and which metrics should agree etc.
+-   determine what the remaining metrics are doing under the hood, ie the ones labelled '???'
+-   obtain code for cohens_dav from {esci} for dependent data? It used to exist.
 
 # Sources
 
-My interest in this dates back to a blog post by Westfall (2016), originally found at http://jakewestfall.org/blog/index.php/2016/03/25/five-different-cohens-d-statistics-for-within-subject-designs/ but the website is now down. A copy is maintained at https://imaging.mrc-cbu.cam.ac.uk/statswiki/FAQ/tdunpaired as of 2024. The easystats R package {effectsize} was recently updated to include implementations of many different within-subjects Cohen's *d* variants (see [here](https://easystats.github.io/effectsize/reference/repeated_measures_d.html)), which make me think to revisit this issue to see what other variants and implementations exist.
+My interest in this dates back to a blog post by Westfall (2016), originally found at <http://jakewestfall.org/blog/index.php/2016/03/25/five-different-cohens-d-statistics-for-within-subject-designs/> but the website is now down. A copy is maintained at <https://imaging.mrc-cbu.cam.ac.uk/statswiki/FAQ/tdunpaired> as of 2024. The easystats R package {effectsize} was recently updated to include implementations of many different within-subjects Cohen's *d* variants (see [here](https://easystats.github.io/effectsize/reference/repeated_measures_d.html)), which make me think to revisit this issue to see what other variants and implementations exist.
 
-Note that I found what appears to be an error in Jake's code that I don't see documented elsewhere: Jake specified that $d_t$ could be calculated using `d_t = t_stat * sqrt(2/n)`, where t_stat is the t statistic from a Student's t test. This math agrees with Lakens (2013) equation 2, i.e., `d_t = t_stat * sqrt(1/n1 + 1/n2)`. However, this applies only to an independent t-test - Jake's original blog misapplies the formula for an indepenent t-test to a dependent. The correct formula for a dependent t-test seems to be `d_t = t_stat / sqrt(n)`. 
+Note that I found what appears to be an error in Jake's code that I don't see documented elsewhere: Jake specified that $d_t$ could be calculated using `d_t = t_stat * sqrt(2/n)`, where t_stat is the t statistic from a Student's t test. This math agrees with Lakens (2013) equation 2, i.e., `d_t = t_stat * sqrt(1/n1 + 1/n2)`. However, this applies only to an independent t-test - Jake's original blog misapplies the formula for an indepenent t-test to a dependent. The correct formula for a dependent t-test seems to be `d_t = t_stat / sqrt(n)`.
 
 # Hypothetical study
 
 Imagine that, like Balcetis & Dunning (2010), you want to answer a very simple question: how much do people prefer chocolate over poop?
 
-- You have participants rate pictures of chocolate and pictures of poop from negative (1) to positive (7). 
-- How should you analyse this data to compare the mean evaluations of chocolate or poop? Should the test/effect size be independent or dependent?
-- What version of Cohen's d should you use to calculate the effect size?
-- More mundanely, what implementation of this version of Cohen's d should you use - i.e., which R package?
+-   You have participants rate pictures of chocolate and pictures of poop from negative (1) to positive (7).
+-   How should you analyse this data to compare the mean evaluations of chocolate or poop? Should the test/effect size be independent or dependent?
+-   What version of Cohen's d should you use to calculate the effect size?
+-   More mundanely, what implementation of this version of Cohen's d should you use - i.e., which R package?
 
 The specific choice of which version of Cohen's d won't affect the results that much... right? Studies and meta-analyses never make much distinction between them, so they must all be quite similar, right?
 
@@ -607,7 +607,7 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
                hedges_correction = hedges_correction) |>
         dplyr::select(implementation, type, hedges_correction, estimate = d_rm, ci_lower = CI_low, ci_upper = CI_high),
       
-      effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "av", adjust = hedges_correction) |> 
+      effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "av", adjust = hedges_correction) |> #they use a different hedges correction
         as_tibble() |> 
         mutate(type = "d_av",
                implementation = "{effectsize}",
@@ -804,6 +804,11 @@ plot_different_dependent_cohens_ds(parameters)
 
 ```
 
+### Some Comments about observed differences withing categories
+
+-   d_z (lsr) does not use hedges correction, it is not available for paired data
+-   
+
 # Session info
 
 ```{r}
@@ -811,4 +816,3 @@ plot_different_dependent_cohens_ds(parameters)
 sessionInfo()
 
 ```
-
