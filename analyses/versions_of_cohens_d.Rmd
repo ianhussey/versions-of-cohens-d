@@ -88,7 +88,7 @@ cohens_d_s_metafor <- function(data){
     pivot_wider(names_from = "timepoint",
                 values_from = c("mean", "sd", "n"))
   
-  fit <- escalc(measure = "SMD", 
+  fit <- metafor::escalc(measure = "SMD", 
                 m1i = mean_stimulus2, 
                 sd1i = sd_stimulus2, 
                 n1i = n_stimulus2,
@@ -119,7 +119,7 @@ cohens_d_av_metafor <- function(data){
     pivot_wider(names_from = "timepoint",
                 values_from = c("mean", "sd", "n"))
   
-  fit <- escalc(measure = "SMDH", 
+  fit <- metafor::escalc(measure = "SMDH", 
                 m1i = mean_stimulus2, 
                 sd1i = sd_stimulus2, 
                 n1i = n_stimulus2,
@@ -568,7 +568,7 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
         dplyr::select(implementation, type, hedges_correction, estimate, ci_lower, ci_upper),
       
       cohens_d_dep_effsize(data = data, hedges_correction = hedges_correction) |> 
-        mutate(type = "d_rm (dep)",
+        mutate(type = "d_rm",
                implementation = "{effsize}",
                hedges_correction = hedges_correction) |>
         dplyr::select(implementation, type, hedges_correction, estimate, ci_lower, ci_upper),
@@ -588,8 +588,8 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
       # this provides nearly identical results to d_s under most conditions
       effectsize::cohens_d(score ~ timepoint, data = data, pooled_sd = FALSE, adjust = hedges_correction) |>
         as_tibble() |>
-        mutate(type = "d_s_nonpooled",
-               implementation = "{effectsize}",
+        mutate(type = "d_av",
+               implementation = "{effectsize::cohens_d}",
                hedges_correction = hedges_correction) |>
         dplyr::select(implementation, type, hedges_correction, estimate = Hedges_g, ci_lower = CI_low, ci_upper = CI_high),
       
@@ -607,10 +607,10 @@ multiple_cohens_ds_for_dependent_data <- function(data, hedges_correction = TRUE
                hedges_correction = hedges_correction) |>
         dplyr::select(implementation, type, hedges_correction, estimate = d_rm, ci_lower = CI_low, ci_upper = CI_high),
       
-      effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "av", adjust = hedges_correction) |> #they use a different hedges correction
+      effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "av", adjust = hedges_correction) |> 
         as_tibble() |> 
         mutate(type = "d_av",
-               implementation = "{effectsize}",
+               implementation = "{effectsize::repeated_measures_d}",
                hedges_correction = hedges_correction) |>
         dplyr::select(implementation, type, hedges_correction, estimate = d_av, ci_lower = CI_low, ci_upper = CI_high),
       
@@ -804,10 +804,24 @@ plot_different_dependent_cohens_ds(parameters)
 
 ```
 
-### Some Comments about observed differences withing categories
+## Some Comments about observed differences withing categories
 
--   d_z (lsr) does not use hedges correction, it is not available for paired data
--   
+-   d_z
+    -   d_z (lsr) does not use hedges correction, it is not available for paired data
+    -   d_z (effectsize) use stats::sd(x_1-x_2) as denominator instead of calculating r manually, uses approximate hedges
+    -   d_z (rstatix) uses this hedges correction: d\*(n - 2)/(n - 1.25)
+    -   d_z (esc) uses approximate hedges
+-   d_av
+    -   d_av (metafor) uses exact hedges correction
+    -   d_av (effectsize) uses approximate hedges correction
+-   d_b
+    -   Either use $x_1$ or $x_2$ as reference, which can potentialy give different results
+-   d_rm
+    -   They seem to agree
+-   d_s
+    -   They seem to agree, except for the psych package, as discussed in `hedges.rmd`
+-   d_t
+    -   correspond to $d_z$ (dependent) and $d_s$ (independent) respectively
 
 # Session info
 
