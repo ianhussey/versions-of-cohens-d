@@ -17,6 +17,7 @@ output:
 -   add explanatory notes about which metrics have more and less desirable properties, what desirable properties are, and which metrics should agree etc.
 -   determine what the remaining metrics are doing under the hood, ie the ones labelled '???'
 -   obtain code for cohens_dav from {esci} for dependent data? It used to exist.
+-   Check if CIs are appropriate where they are calculated manually // Flag which packages do not provide CIs, which is a source of error in practice as I would probably construct a Wald CI with the z-statistic for them, which does not seem appropriate for all of them.
 
 # Sources
 
@@ -43,7 +44,6 @@ Let's explore this in simulations.
 
 knitr::opts_chunk$set(message = FALSE, 
                       warning = FALSE)
-
 options(scipen=999)
 
 ```
@@ -64,7 +64,7 @@ packages = c("effectsize","faux","janitor",
              "dplyr", "tidyr", "tibble",
              "forcats", "ggplot2", "stringr")
 
-groundhog.library(packages, groundhog_day)
+groundhog.library(packages, groundhog_day, tolerate.R.version = '4.4.0')
 
 ```
 
@@ -346,19 +346,18 @@ cohens_d_s_mbess <- function(data, hedges_correction = TRUE){
   
   t <- stats::t.test(score ~ timepoint, data = data)$statistic
   
-  cis <- ci.smd(#ncp = t,
-                smd = d, 
+  cis <- ci.smd(ncp = t,
+                #smd = d, 
                 n.1 = data |> filter(timepoint == "stimulus2") |> pull(score) |> length(), 
                 n.2 = data |> filter(timepoint == "stimulus1") |> pull(score) |> length())
   
   res <- 
-    data.frame(estimate = cis$smd,
+    data.frame(estimate = d,
                ci_lower = cis$Lower.Conf.Limit.smd,
                ci_upper = cis$Upper.Conf.Limit.smd) 
   
   return(res)
 }
-
 
 cohens_d_s_lsr <- function(data, hedges_correction = TRUE){
   require(dplyr)
