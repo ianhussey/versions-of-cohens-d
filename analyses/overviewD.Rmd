@@ -1,0 +1,1766 @@
+---
+title: "Overview Cohens D"
+author: "Remo Schmutz"
+date: "2025-02-13"
+output:
+  html_document:
+    code_folding: hide
+    highlight: haddock
+    theme: flatly
+    toc: yes
+    toc_float: yes
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(1234)
+library(purrr)
+library(dplyr)
+library(gt)
+library(furrr)
+library(future)
+library(tidyverse)
+```
+
+# The Cohen's D Problem
+
+Different versions of Cohen's D can yield different result, which is not surprising - they are different versions after all. See [here](https://savvystatistics.com/how-an-effect-size-can-simultaneously-be-both-small-and-large/) for an example. Different versions and their use case are discussed in @lakens and @statswiki. In this work we are less interested in theoretically discriminating the different versions, which is already pretty well documented, but rather in building the bridge between theory and software implementation. There are more than enough implementations of Cohen's D in R but which functions are equivalent and how do they map to the theoretical different versions of Cohen's D?
+
+The main formula as stated by Cohen is as follows:
+
+$$d = \frac{M_1 - M_2}{SD},$$
+
+where $M_i$ is the mean in group $i$ and SD is the estimate for the standard deviation.
+
+It serves as a standardized effectsize for the difference in means. The comparison can either be made within- or between groups, which is why there is a need for different versions. The main building blocks stay the same in all versions of Cohen's D that we present: There are always two means and an estimate for the standard deviation. The only thing that changes is the estimator used to estimate the SD.
+
+Different versions of Cohen's D can be categorised based on the estimator that are used to estimate the SD in the formula as described in the vignette of the effectsize package (@effectsize) and @lakens.
+
+## Goals of this project
+
+-   Define different versions of Cohen's D and map each implementation to one of these categories.
+
+-   Compare point estimates and confidence intervals for different simulated datasets within groups.
+
+-   What is the input format? Do we give in the raw data or manually input the means and standard deviations?
+
+-   How user-friendly are the implementations? Does the used know which version he/she uses or is it rather ambiguous for someone that does not go into the source code. For the implementations that do not describe well what is used, show via simulation the introduced bias that could arise, depending on different designs.
+
+$\texttt{Disclaimer:}$ At the moment, this work is not about judging the respective properties and use cases of the different versions of Cohen's D. The same goes for different methods to construct confidence intervals for the effect size.
+
+# Theory
+
+## Notation
+
+I will use the following notation:
+
+$V_i :=$ Variance of group $i \in \{1,2\}$
+
+$\bar{X}_i :=$ Mean of group $i \in \{1,2\}$
+
+$\bar{X}_{ij} :=$ Mean of individual $j \in \{1,..,n\}$ in group $i \in \{1,2\}$
+
+$x_{ijk} :=$ Obervation $k$ of individual$j \in \{1,..,n\}$ in group $i \in \{1,2\}$
+
+$d:=$ Cohens' D estimate
+
+$j:=$ hedges correction factor
+
+$d\cdot j = g :=$ Hedges' G estimate
+
+$\delta :=$ population effect
+
+$\sigma^2:=$ variance of the estimator
+
+## Different Versions of Cohen's D {#versions}
+
+Different versions of Cohen's D can be distinguished based on the estimator used to estimate the standard deviation in the formula. There is a distinction to be made about wether a particular estimator is used in a within- or between design. In general $d_s$ is proposed to serve between subject comparisons, while $d_z$ and $d_{rm}$ are used for within subject comparisons. Both $d_{avg}$ and $d_b$ have been described in both settings afaik. Of course implementations that are built for within comparisons do only work on between data if the sample size is the same for both groups - in this case they should both yield the same point estimate in the uncorrected version $d$. If we apply hedges correction, we should get different results between the two, because their degrees of freedom differ, which is used in the calculating of the hedges correction. Also, the confidence intervals differ because of the same reason.
+
+\begin{align}
+M \text{(between)} &= \bar{X}_1 - \bar{X}_2 \\ 
+  &= \frac{1}{n_1} \sum x_{1i} - \frac{1}{n_2} \sum x_{2j}  && \text{(Definition of sample means)} \\ 
+  &= \frac{1}{n} \sum \sum (x_{1i} - x_{2j}) && \text{(Expanding both sums into a single sum bc $n_1 = n_2$)} \\ 
+  &= \frac{1}{n} \sum (x_{1i} - x_{2i}) && \text{(Pairing elements from both groups using $i=j$)} \\
+  &= M \text{(within)}
+\end{align}
+
+| Method | Standard Deviation Formula | Description |
+|-------------------|----------------------------------|-------------------|
+| $d_s$ | $SD = \sqrt{\frac{(n_1-1)\cdot SD_1^2 + (n_2 -1)\cdot SD^2_2}{n_1 + n_2-2}}$ | Pooled SD for independent samples |
+| $d_{avg}$ | $SD = \sqrt{\frac{SD_1^2 + SD^2_2}{2}}$ | Average variance |
+| $d_z$ | $SD = \sqrt{SD_1^2+SD_2^2-2rSD_1SD_2}$ | Pooled SD with explicit correlation adjustment |
+| $d_{rm}$ | $SD = SD_z\cdot \sqrt{2(1-r)}$ | Further adjusts $d_z$ using $2(1-r)$ |
+| $d_b$ | $SD = SD_{control}$ | Uses only control group SD |
+
+There is some discrepancy here: Cumming suggests to standardize by the squared average variance of the two paired conditions, while Lakens suggests to just take the average standard deviations but citing Cumming. Also, this estimator seems to be used in both within and between designs, which makes it a bit confusing. They differ in the degrees of freedom they use, which is then a source of heterogeneity.
+
+Cumming: $\sqrt{\frac{SD_1^2 + SD^2_2}{2}}$, Lakens: $\frac{SD_1 + SD_2}{2}$
+
+## Hedges' G
+
+For sample sizes below 20, Hedges’ g corrects the bias introduced by the standard formulation of Cohen’s d, as the latter is not an unbiased estimator of the standardized mean difference in such cases. For sample sizes above this threshold, there is no significant difference between the two measures.
+
+There are different ways to calculate the hedges correction ($j$):
+
+$\texttt{Option I (Exact):}$
+
+$$j = \frac{\Gamma(\frac{df}{2})}{\sqrt{\frac{df}{2}}\cdot \Gamma(\frac{df-1}{2})}$$
+
+$\texttt{Option II (Approximation):}$
+
+$$j = \frac{n_1+n_2-3}{n_1+n_2-2.25}=1-\frac{3}{4(n_1 + n_2)-9} = 1-\frac{3}{4df-1}$$
+
+For the case of simplicity I will not distinguish the two in the following work. This should not matter for the comparison of the different implementations but can explain slight deviations in the results (talking many digits behind the zero here).
+
+### Dependence of which version is used
+
+The above case is for $d_s$. The formula $1-\frac{3}{4df-1}$ is always used but the $df$ differs depending on which version is used:
+
+-   $d_s$: $df = n_1 + n_2 - 2$ (canonical)
+-   $d_{avg}$: $df = \frac{(n_1 - 1)(n_2 - 1)(\sigma_1^2 + \sigma_2^2)^2}{(n_2 - 1) \sigma_1^4 + (n_1 - 1) \sigma_2^4}$ (Declare)
+-   $d_z/d_{rm}/d_{avg}$: $df = n_1 - 1$ (adjusted)
+
+Note, this is a source of heterogeneity in the point estimates because when a different $df$ is used, the hedges correction factor $j$ is different. We will see that sometimes the df for $d_s$ is also used for the other cases, therefore I will name them according to the labels I give them above.
+
+## Variance of the Estimator
+
+There are two main methods to construct a confidence interval. We will see that there are many slight deviations from these two methods, which can lead to different results. Hedges himself wrote that "In small samples, the estimator $g$ of effect size has a sampling distribution that is a constant times the noncentral t distribution. When the samples sizes in the experimental and control groups are large, however, the asymptotic distribution of $g$ provides a satisfactory approximation to the exact distribution of $g$.
+
+On page 305 of Understanding the New Statistics, Cumming write that while we should use the unbiased estimator for the effectsize, the CI should be around the biased estimate.
+
+### Option I (large sample)
+
+This is what Hedges proposed for the large sample case. He writes (I changed the notation to match what I use): "This large-sample approximation is used by substituting an estimator of the effect size for $\delta$ in (8). In the case of a single effect size, we substitute $g$ for $\delta$ in (8) to obtain an expression for the variance of $g$."
+
+The equation 8 he refers to is the following:
+
+$$\sigma^2 = \frac{1}{n_1}+\frac{1}{n_2}+\frac{\delta^2}{2(n_1+n_2)}$$
+
+Therefore we can plug our estimate $g$ into the equation to get the variance of the estimator:
+
+$$\sigma^2 = \frac{1}{n_1}+\frac{1}{n_2}+\frac{g^2}{2(n_1+n_2)}$$ The sampling distribution of $g$ is approximately normal with mean $g$ and variance $\sigma^2$, therefore the standard error of $g$ is $\sqrt{\sigma^2}$ and the Wald confidence interval is constructed as $g \pm z_{0.975}\cdot \sqrt{\sigma^2}$.
+
+Note, sometimes the expression for the variance it is also written as $\sigma^2=\frac{n_1+n_2}{n_1n_2}+\frac{\delta^2}{2(n_1+n_2)}$, which is equivalent to the expression above because $\frac{x+y}{xy}=\frac{x}{xy}+\frac{y}{xy} = \frac{1}{y} + \frac{1}{x}$ holds in general.
+
+Sometimes $t_{\text{df};.975}$ is used.
+
+### Option II (small sample) {#option-ii-small-sample}
+
+This method finds the `ncp` parameter ($\lambda$) for which the observed t-statistic is the .025 and the .975 quantile of a noncentral t-distribution respectively. These lower- and upper bounds of the `ncp` are then transformed back to get the confidence limmits of the effect size. This is described in Steiger (2004).
+
+-   Step 1: Calculate the test statistic $t$ (which actually refers to the ncp $\lambda$): Note, the exact transformation from the effect size to the test statistic depends on the type of effect size that is used, below for $d_s$
+
+$$t_{between} = d \sqrt{\frac{n_1n_2}{n_1+n_2}} = d\sqrt{\frac{n_1}{2}}(\text{if } n_1=n_2)$$ There are some equivalent formulation, which could potentially lead to confusion:
+
+$d \sqrt{\frac{n_1n_2}{n_1+n_2}} = \frac{d}{\sqrt{\frac{n_1+n_2}{n_1n_2}}} = \frac{d}{\sqrt{\frac{1}{n_1}+\frac{1}{n_2}}}$
+
+-   Step 2: Find the confidence interval for the noncentrality parameter $\lambda$:
+
+Solve $\mathbb{P}(T \leq t \mid \nu, \lambda_U) = .975$ and $\mathbb{P}(T \leq t \mid \nu, \lambda_L) = .025$for $\lambda$, where $t$ and $\nu$ are fixed. This cannot be done analytically but numerically.
+
+-   Step 3: Transform the confidence interval for $\lambda$ back to the effect size metric to yield a CI for the effect size.
+
+$$[\lambda_{L} \sqrt{\frac{1}{n_1}+\frac{1}{n_2}}, \lambda_{U} \sqrt{\frac{1}{n_1}+\frac{1}{n_2}}]$$ There is also a way of using the Lambda Prime Distribution instead of the non-central t-distribution, which is a modified version of the noncentral t-distribution, designed to provide better small-sample accuracy. I will categorize this as Option II as well.
+
+### Option III
+
+The third option that is used is bootstrapping, which is only used in the durga package.
+
+# Implementation
+
+## Set-up
+
+I simulate this very basic set-up in order to implement the different functions and to flag differences the estimate between the functions which I try to explain by looking at the source code. The data is generated as follows:
+
+```{r}
+# Example: Two independent samples gr1 and gr2
+set.seed(123)
+n    <- 100
+m1   <- 6
+sd1  <- 2
+m2   <- 1
+sd2  <- 3
+
+gr1 <- rnorm(n, m1, sd1)
+gr2 <- rnorm(n, m2, sd2)
+
+# Summaries for each group
+m1 <- mean(gr1)
+sd1 <- sd(gr1)
+n1  <- length(gr1)
+m2 <- mean(gr2)
+sd2 <- sd(gr2)
+n2  <- length(gr2)
+
+r <- cor(gr1, gr2)
+
+id <- 1:100
+
+df <- data.frame(
+  m1 = m1,  # Mean of group 1
+  sd1 = sd1,  # SD of group 1
+  n1  = n1,   # Sample size of group 1
+  m2  = m2,  # Mean of group 2
+  sd2 = sd2,  # SD of group 2
+  n2  = n2)    # Sample size of group 2
+
+df_raw <- data.frame(
+  gr1 = gr1,
+  gr2 = gr2,
+  id = id) |> 
+  tidyr::pivot_longer(cols = c(gr1, gr2), names_to = "group", values_to = "score")
+```
+
+## Mapping
+
+### $d_s: SD = \sqrt{\frac{(n_1-1)\cdot SD_1^2 + (n_2 -1)\cdot SD^2_2}{n_1 + n_2-2}}$
+
+This is usually applied in between subject designs.
+
+-   [`metafor::escalc(measure = "SMD")`](https://github.com/wviechtb/metafor/blob/master/R/escalc.r)
+-   [`esc::esc_mean_sd(es = "g")`](https://github.com/strengejacke/esc/blob/master/R/esc_mean_sd.R)
+-   [`esci::CI_smd_ind_contrast(assume_equal_variance = T)`](https://github.com/rcalinjageman/esci/blob/master/R/CI_smd_ind_contrast.R)
+-   [`effsize::cohen.d(pooled = TRUE, hedges.correction=TRUE)`](https://github.com/mtorchiano/effsize/blob/master/R/CohenD.R)
+-   [`psych::cohen.d()`](https://rdrr.io/cran/psych/src/R/cohen.d.R)
+-   [`MBESS::smd(Unbiased = hedges_correction)`](https://rdrr.io/cran/MBESS/src/R/smd.R)
+-   [`lsr::cohensD(method = “corrected”)`](https://rdrr.io/cran/lsr/src/R/cohensD.R)
+-   [`effectsize::cohens_d(pooled_sd = TRUE, adjust = TRUE)`](https://github.com/easystats/effectsize/blob/main/R/cohens_d.R)
+-   [`effectsize::repeated_measures_d(method = “d”)`](https://github.com/easystats/effectsize/blob/main/R/repeated_measures_d.R)
+-   [`desctools::CohenD(x = gr1, y = gr2, var.equal = TRUE)`](https://rdrr.io/cran/DescTools/man/CohenD.html)
+-   [`rstatix::two_independent_sample_d(var.equal = TRUE)`](https://github.com/kassambara/rstatix/blob/master/R/cohens_d.R)
+-   [`Durga::DurgaDiff(effect_type = hedges g_s⁠)`](https://github.com/cran/Durga/blob/master/R/differences.R)
+
+### $d_{avg}: SD = {\sqrt{\frac{SD_1^2 + SD^2_2}{2}}}$
+
+This measurement is both used in within- and in between subject designs. There is also some heterogeneity in how the degrees of freedom are calculated. The accepted version (Declare et al) seems to be $df = \frac{(n_1 - 1)(n_2 - 1)(\sigma_1^2 + \sigma_2^2)^2}{(n_2 - 1) \sigma_1^4 + (n_1 - 1) \sigma_2^4}$, while $df = n_1 + n_2-2$ is also used sometimes.
+
+-   [`metafor::escalc(measure = "SMDH", vtype="LS")`](https://github.com/wviechtb/metafor/blob/master/R/escalc.r)
+-   [`esci::CI_smd_ind_contrast(assume_equal_variance = F)`](https://github.com/rcalinjageman/esci/blob/master/R/CI_smd_ind_contrast.R)
+-   [`lsr::cohensD(method = “unequal”)`](https://rdrr.io/cran/lsr/src/R/cohensD.R)
+-   [`effectsize::cohens_d(pooled_sd = FALSE, adjust = TRUE)`](https://github.com/easystats/effectsize/blob/main/R/cohens_d.R)
+-   [`effectsize::repeated_measures_d(method = “av”)`](https://github.com/easystats/effectsize/blob/main/R/repeated_measures_d.R)
+-   [`Durga::DurgaDiff(effect_type = hedges g⁠)`](https://github.com/cran/Durga/blob/master/R/differences.R)
+-   [`rstatix::two_independent_sample_d(var.equal = FALSE)`](https://github.com/kassambara/rstatix/blob/master/R/cohens_d.R)
+
+### $d_z: SD = \sqrt{SD_1^2+SD_2^2-2rSD_1SD_2}$
+
+-   [`esc::esc_mean_sd(r=r, es = "g")`](https://github.com/strengejacke/esc/blob/master/R/esc_mean_sd.R)
+-   [`lsr::cohensD(method = “paired”)`](https://rdrr.io/cran/lsr/src/R/cohensD.R)
+-   [`effectsize::repeated_measures_d(method = “z”)`](https://github.com/easystats/effectsize/blob/main/R/repeated_measures_d.R)
+-   [`effectsize::cohens_d(paired = TRUE)`](https://github.com/easystats/effectsize/blob/main/R/repeated_measures_d.R)
+-   [`effsize::cohen.d(paired = TRUE, within = FALSE)`](https://github.com/mtorchiano/effsize/blob/master/R/CohenD.R)
+-   [`Durga::DurgaDiff(effect_type = hedges g_z⁠)`](https://github.com/cran/Durga/blob/master/R/differences.R)
+-   [`rstatix::two_independent_sample_d(paired = TRUE)`](https://github.com/kassambara/rstatix/blob/master/R/cohens_d.R)
+
+### $d_{rm}: SD = SD_z\cdot \sqrt{2(1-r)}$
+
+-   [`effsize::cohen.d(paired = TRUE, within = TRUE)`](https://github.com/mtorchiano/effsize/blob/master/R/CohenD.R)
+-   [`effectsize::repeated_measures_d(method = “rm”)`](https://github.com/easystats/effectsize/blob/main/R/repeated_measures_d.R)
+
+### $d_b: SD = SD_{control}$
+
+-   [`metafor::escalc(measure = "SMD1", vtype="LS")`](https://github.com/wviechtb/metafor/blob/master/R/escalc.r)
+-   [`effectsize::glass_delta(adjust = TRUE)`](https://github.com/easystats/effectsize/blob/main/R/cohens_d.R)
+-   [`effectsize::repeated_measures_d(method = “b”, adjust = TRUE)`](https://github.com/easystats/effectsize/blob/main/R/repeated_measures_d.R)
+-   [`effsize::cohen.d(pooled = FALSE, hedges.correction=TRUE)`](https://github.com/mtorchiano/effsize/blob/master/R/CohenD.R)
+-   [`Durga::DurgaDiff(effect_type = hedges delta_pre⁠)`](https://github.com/cran/Durga/blob/master/R/differences.R)
+
+## Metafor (4.9-0)
+
+### Options
+
+`Default Settings`
+
+`Error in metafor::escalc(m1i = m1, sd1i = sd1, n1i = n1, m2i = m2, sd2i = sd2,: Must specify an effect size or outcome measure via the 'measure' argument.`
+
+The user has to be explicit about the version he/she want to use as there is no output if you do not specify a version. I think this is a good setting as it forces the user to go into the documentation and at least be explicit about what he/she wants to use.
+
+$d_s \rightarrow$ `measure = "SMD"`
+
+```{r}
+metafor_s <- metafor::escalc(measure="SMD",
+                                  m1i=m1, 
+                                  sd1i=sd1, 
+                                  n1i=n1,
+                                  m2i=m2, 
+                                  sd2i=sd2, 
+                                  n2i=n2,
+                                  vtype="LS")
+
+est_metafor_s <- metafor_s$yi
+sd_metafor_s <- sqrt(metafor_s$vi)
+l_metafor_s <- est_metafor_s - qnorm(0.975) * sd_metafor_s
+u_metafor_s <- est_metafor_s + qnorm(0.975) * sd_metafor_s
+s_metafor <- c("metafor", 
+               "Option I",
+               l_metafor_s, 
+               est_metafor_s, 
+               u_metafor_s, 
+               "CI has to be calculated manually")
+```
+
+`df <- n1 + n2 - 2`
+
+$d_{avg} \rightarrow$ `measure = "SMDH"`
+
+```{r}
+metafor_avg <- metafor::escalc(measure="SMDH",
+                                  m1i=m1, 
+                                  sd1i=sd1, 
+                                  n1i=n1,
+                                  m2i=m2, 
+                                  sd2i=sd2, 
+                                  n2i=n2,
+                                  vtype = "LS")
+
+est_metafor_avg <- metafor_avg$yi
+sd_metafor_avg <- sqrt(metafor_avg$vi)
+l_metafor_avg <- est_metafor_avg - qnorm(0.975) * sd_metafor_avg
+u_metafor_avg <- est_metafor_avg + qnorm(0.975) * sd_metafor_avg
+avg_metafor <- c("metafor", 
+                 "Option I",
+                 l_metafor_avg, 
+                 est_metafor_avg, 
+                 u_metafor_avg,
+                 "Between / CI has to be calculated manually / canonical df")
+```
+
+`df <- n1 + n2 - 2`
+
+$d_b \rightarrow$ `measure = "SMD1"`
+
+```{r}
+metafor_b <- metafor::escalc(measure="SMD1",
+                                  m1i=m1, 
+                                  n1i=n1,
+                                  m2i=m2, 
+                                  sd2i=sd2, 
+                                  n2i=n2,
+                                  vtype="LS")
+
+est_metafor_b <- metafor_b$yi
+sd_metafor_b <- sqrt(metafor_b$vi)
+l_metafor_b <- est_metafor_b - qnorm(0.975) * sd_metafor_b
+u_metafor_b <- est_metafor_b + qnorm(0.975) * sd_metafor_b
+b_metafor <- c("metafor", 
+               "Option I",
+               l_metafor_b, 
+               est_metafor_b, 
+               u_metafor_b,
+               "CI has to be calculated manually / SD of gr2")
+```
+
+The user specifies the `measure` parameter to determine which version of Cohen's D should be calculated. The `vtype` parameter is used to determine the variance estimator that should be used. The default is `vtype="LS"` which is equivalent to Option I. In the most recent update they added the parameter `correct` which can be used to determine whether hedges correction should be applied. The default is `correct = TRUE` which applies the hedges correction.
+
+### Variance
+
+The metafor package does not provide a confidence interval for the effect size but offers several options to calculate the sampling variance using the `vtype` parameter.
+
+$\texttt{SMD (d_s) & SMD1 (d_b)}$
+
+-   `vtype = "LS"` (default): This is the large sample case and equivalent to Option I: $\frac{1}{n_1} + \frac{1}{n_2} + \frac{g^2}{2(n_1+n_2)}$
+-   `vtype = "LS2"`: Alternative large sample approximation to the sampling variance: $j^2 \cdot \left(\frac{1}{n_1} + \frac{1}{n_2} + \frac{d^2}{2(n_1+n_2)}\right)$ as described in Borenstein, 2009, equation 12.17
+-   `vtype = "UB"`: $\frac{1}{n_1} + \frac{1}{n_2} + (1 - \frac{df-2}{df\cdot j^2}) \cdot g^2$ as described in Hedges 1983, equation 9
+
+The others are not relevant for this work as they are only applicable for meta-analyses.
+
+$\texttt{SMDH (d_{avg})}$
+
+-   `vtype = "LS"` (default): This is the estimator described in Bonett, 2009, equation 5: $d^2 \cdot \frac{\frac{SD_1^4}{n_1-1} + \frac{SD_2^4}{n_2-1}}{8\cdot SD^4} + \frac{SD_1^2}{SD^2(n_1-1)} + \frac{SD_2^2}{SD^2(n_2-1)}$. They implement $g$ instead of $d$ (deliberate).
+-   `vtype = "LS2"`: This is a alternative large sample approximation to the sampling variance (using $n$ instead of $n-1$): $d^2 \cdot \frac{\frac{SD_1^4}{n_1} + \frac{SD_2^4}{n_2}}{8\cdot SD^4} + \frac{SD_1^2}{SD^2(n_1)} + \frac{SD_2^2}{SD^2(n_2)}$
+
+### What could go wrong?
+
+The user clearly specifies which type he wants to calculate, therefore there cannot go wrong much.
+
+## Esc (0.5.1)
+
+### Options
+
+`Default Settings`
+
+This is equivalent to $d_s$ without Hedges correction.
+
+```{r}
+esc::esc_mean_sd(grp1m  = m1,
+            grp1sd = sd1,
+            grp1n  = n,
+            grp2m  = m2,
+            grp2sd = sd2,
+            grp2n  = n)
+```
+
+$d_s \rightarrow$ `es.type = "g"`
+
+```{r}
+esc_s <- esc::esc_mean_sd(
+                 grp1m  = m1,
+                 grp1sd = sd1,
+                 grp1n  = n,
+                 grp2m  = m2,
+                 grp2sd = sd2,
+                 grp2n  = n,
+                 es.type = "g")
+
+s_esc <- c("esc", 
+           "Option I",
+           esc_s[["ci.lo"]], 
+           esc_s[["es"]], 
+           esc_s[["ci.hi"]],
+           "Variance of the uncorrected estimate is used")
+```
+
+$d_z \rightarrow$ `es.type = "g", r = "r"`
+
+```{r}
+esc_z <- esc::esc_mean_sd(
+                 grp1m  = m1,
+                 grp1sd = sd1,
+                 grp1n  = n1,
+                 grp2m  = m2,
+                 grp2sd = sd2,
+                 grp2n  = n2,
+                 r = r, 
+                 es.type = "g")
+
+z_esc <- c("esc", 
+           "Option I",
+           esc_z[["ci.lo"]], 
+           esc_z[["es"]], 
+           esc_z[["ci.hi"]],
+           "Variance of the uncorrected estimate is used // canonical df")
+```
+
+### Variance
+
+Both functions use the same variance estimator (Option I), with the exception that they use $d$ instead of $g$ in the formula, which yields the Variance for the uncorrected estimate. Therefore, this variance estimate does not exactly match what we observe in the metafor package. This is described in the [source code](https://rdrr.io/cran/esc/src/R/esc_helper.R) for the helper functions.
+
+$$\sigma^2 = \frac{1}{n_1} + \frac{1}{n_2} + \frac{d^2}{2(n_1+n_2)}$$ The CI is calculated as $d \pm z_{0.975}\cdot \sqrt{\sigma^2}$.
+
+### What could go wrong?
+
+The user just knows that if he does not plug in `r` "group-based standard deviations" are used and when `r` is provided "Correlation for within-subject designs (paired samples, repeated measures)." therefore any of the repeated measures could be meant.
+
+## psych (2.4.6.26)
+
+### Options
+
+`Default Settings`
+
+As there are not different versions available this is just the default. It returns both hedges and cohens d,
+
+$d_s$
+
+```{r}
+df_psych <- df_raw |> dplyr::select(group, score)
+psych_s <- psych::cohen.d(df_psych ~ group)
+s_psych <- c("psych", 
+             "Option II",
+             -psych_s$hedges.g[3], 
+             -psych_s$hedges.g[2], # uses m2-m1 instead of m1-m2 thats why i reverse the esimates
+             -psych_s$hedges.g[1],
+             "hedges correction is not correctly applied, m2-m1 instead of m1-m2")
+```
+
+As we can see in the code below, the hedges correcion is not really applied as it should. They basically just change $n$ to $n-2$ without actually applying the hedges correction. This is why the point estimate is not comparable to other implementations.
+
+They basically do this:
+
+-   If no hedges correction they use this, which is the biased pooled standard deviation: $\sqrt{\frac{(n_1-1)\cdot SD_1^2 + (n_2 -1)\cdot SD^2_2}{n_1 + n_2}}$
+-   When applying hedges correction, they just use the unbiased pooled standard deviation: $\sqrt{\frac{(n_1-1)\cdot SD_1^2 + (n_2 -1)\cdot SD^2_2}{n_1 + n_2-2}}$, which is not what the hedges correction really is.
+
+Also, they implement $\bar{X_2}-\bar{X_1}$ instead of $\bar{X_1}-\bar{X_2}$, which is why the point estimate is negative.
+
+This chunk is directly copied from the source code:
+
+```{r, eval=F}
+d <- stats$mean[2,] - stats$mean[1,]   #this is a vector differerences
+sd.p <- sqrt((( (stats$n[1,]-1) * stats$sd[1,]^2) + (stats$n[2,]-1) * stats$sd[2,]^2)/(stats$n[1,]+stats$n[2,])) #if we subtract 2 from n, we get Hedges g
+sd.ph <- sqrt((((stats$n[1,]-1) * stats$sd[1,]^2) + (stats$n[2,]-1) * stats$sd[2,]^2)/(stats$n[1,]+stats$n[2,]-2)) #if we subtract 2 from n, we get Hedges g
+n <- stats$n[1,]+ stats$n[2,]   #this is a vector of ns taken from the statsBy function
+
+cohen.d <- d/sd.p
+
+hedges.g <- d/sd.ph
+```
+
+### Variance
+
+Option II
+
+## Esci (1.0.5)
+
+### Options
+
+`Default Settings`
+
+```{r}
+formals(esci::CI_smd_ind_contrast)
+```
+
+The default version is a bias corrected $d_av$.
+
+$d_s \rightarrow$ `assume_equal_variance = T)`
+
+```{r}
+result_esci_s <- esci::CI_smd_ind_contrast(
+  means = c(m1, m2),
+  sds = c(sd1, sd2),
+  ns = c(n,n),
+  contrast = contrast <- c(1, -1),
+  assume_equal_variance = TRUE,
+  correct_bias = TRUE)
+
+s_esci <- c("esci", 
+            "Option II (lambda prime)",
+            result_esci_s[["LL"]], 
+            result_esci_s[["effect_size"]], 
+            result_esci_s[["UL"]],
+            "")
+```
+
+$d_{avg} \rightarrow$ `assume_equal_variance = F)`
+
+```{r}
+result_esci_avg <- esci::CI_smd_ind_contrast(
+  means = c(m1, m2),
+  sds = c(sd1, sd2),
+  ns = c(n, n),
+  contrast = contrast <- c(1, -1),
+  assume_equal_variance = FALSE,
+  correct_bias = TRUE)
+
+avg_esci <- c("esci", 
+              "Option II (lambda prime)",
+              result_esci_avg[["LL"]], 
+              result_esci_avg[["effect_size"]], 
+              result_esci_avg[["UL"]],
+              "Between / Declare")
+```
+
+$df = \frac{(n_1 - 1)(n_2 - 1)(\sigma_1^2 + \sigma_2^2)^2}{(n_2 - 1) \sigma_1^4 + (n_1 - 1) \sigma_2^4}$
+
+### Variance
+
+Option II (slightly modified)
+
+From the source code we can see that $\lambda$ is calculated as `lambda <- effect_size / sqrt(sum(contrast^2/ns))`, which is equal to $\lambda = \frac{d}{\sqrt{\frac{1}{n_1}+\frac{1}{n_2}}}$ and therefore equal to the formula we described in [Option II (small sample)](#option-ii-small-sample). They then find the confidence interval for $\lambda$ using the Lambda Prime distribution ($\lambda{\prime}$) which is a modified version of the noncentral t-distribution, designed to provide better small-sample accuracy.
+
+This is the code that is used in the esci package to calculate the confidence interval for the effect size:
+
+```{r}
+esciCI <- function(effect_size, contrast, ns, conf_level = 0.95){
+  
+  dfs <- ns-1
+  df <- sum(dfs)
+  
+  lambda <- effect_size / sqrt(sum(contrast^2/ns)) # Kelley, 2007, equation 60
+      
+  back_from_lambda <- sqrt(sum(contrast^2/ns)) # Kelley, 2007
+      
+  lambda_low <- sadists::qlambdap(1/2-conf_level/2, df = df, t = lambda)
+  lambda_high <- sadists::qlambdap(1/2+conf_level/2, df = df, t = lambda)
+
+  k <- sqrt(2/df)* exp((lgamma((df+1)/2)) - (lgamma((df)/2)))
+  lambda_se <- sqrt(1 + lambda^2 * (1-k^2))
+  se <- lambda_se * back_from_lambda
+
+  lower <- lambda_low * back_from_lambda
+  upper <- lambda_high * back_from_lambda
+  return(setNames(c(lower, effect_size, upper), 
+         c("Lower CI", "Effect Size", "Upper CI")))
+}
+
+esciCI(effect_size = est_metafor_s,
+         contrast = c(1,-1),
+         ns = c(n,n))
+```
+
+## MBESS (4.9.3)
+
+### Options
+
+`default settings`
+
+```{r}
+formals(MBESS::smd)
+```
+
+The default version is a not bias corrected $d_s$.
+
+$d_s \rightarrow$ `Unbiased = hedges_correction`
+
+```{r}
+result_mbess_s <- MBESS::smd(Mean.1 = m1, 
+           Mean.2 = m2, 
+           s.1 = sd1, 
+           s.2 = sd2, 
+           n.1 = n1, 
+           n.2 = n2, 
+           Unbiased = TRUE)
+
+cis <- MBESS::ci.smd(
+  smd = result_mbess_s, 
+  n.1 = n1, 
+  n.2 = n2, 
+  Unbiased = TRUE)
+
+s_mbess <- c("mbess", 
+             "Option II",
+             cis$Lower.Conf.Limit.smd, 
+             cis$smd, 
+             cis$Upper.Conf.Limit.smd,
+             "")
+```
+
+### Variance
+
+Option II
+
+See source code:
+
+```{r eval=F}
+
+if(length(smd)==1)
+  
+  {
+  ncp <- smd*sqrt((n.1*n.2)/(n.1+n.2))
+  Limits <- conf.limits.nct(ncp, df, conf.level=conf.level, alpha.lower=alpha.lower,
+                            alpha.upper=alpha.upper, tol=tol, ...)
+  Limits.L <- Limits$Lower.Limit
+  Limits.U <- Limits$Upper.Limit
+  Lower.Conf.Limit <- Limits.L*sqrt((n.1+n.2)/(n.1*n.2))
+  Upper.Conf.Limit <- Limits.U*sqrt((n.1+n.2)/(n.1*n.2))
+  Result <- list(Lower.Conf.Limit.smd=Lower.Conf.Limit, smd=smd, Upper.Conf.Limit.smd=Upper.Conf.Limit)
+  return(Result)
+  }
+```
+
+## lsr (0.5.2)
+
+### Options
+
+`default settings`
+
+```{r}
+formals(lsr::cohensD)
+```
+
+The default version is a not bias corrected $d_s$.
+
+$d_s \rightarrow$ `method = "corrected"`
+
+```{r}
+lsr_s <- lsr::cohensD(gr1, gr2, method = "corrected")
+s_lsr <- c("lsr", 
+           "No vairance estimate",
+           "", 
+           lsr_s, 
+           "",
+           "")
+```
+
+$d_{avg} \rightarrow$ `method = "unequal"`
+
+```{r}
+lsr_avg <- lsr::cohensD(gr1, gr2, method = "unequal")
+avg_lsr <- c("lsr", 
+             "No variance estimate",
+             "", 
+             lsr_avg,
+             "",
+             "Between / cohens d instead of hedges g")
+```
+
+$d_z \rightarrow$ `method = "paired"`
+
+```{r}
+lsr_z <- lsr::cohensD(gr1, gr2, method = "paired")
+z_lsr <- c("lsr", 
+           "No variance estimate",
+           "", 
+           lsr_z, 
+           "",
+           "cohens d instead of hedges g")
+```
+
+Important to note is that the hedges correction is only available for $d_s$.
+
+### Variance
+
+There is no variance/CI estimate available.
+
+## effsize (0.8.1)
+
+I has already been reported in 2019 that there are situations where the confidence interval does not include the point estimate, which is the least one could ask [issue](https://github.com/mtorchiano/effsize/issues/38). This issue seems to happen when the option `noncentral = TRUE` is chosen but it seems only to be an issue when `paired = TRUE`, not sure why.
+
+### Options
+
+`Default Settings`
+
+Calculates a not bias corrected $d_s$ with `noncentral = FALSE`.
+
+$d_s \rightarrow$ `paired = FALSE, pooled = TRUE, hedges.correction = TRUE`
+
+```{r}
+d = c(gr1, gr2)
+f = factor(rep(c("Treatment","Control"), each=n), 
+           levels=c("Treatment", "Control"),
+           ordered=TRUE)
+
+result_effsize_s <- effsize::cohen.d(d~f, hedges.correction = T, pooled = T, paired = F, noncentral=TRUE)
+
+s_effsize <- c("effsize", 
+               "Option II",
+               result_effsize_s[["conf.int"]][["lower"]], 
+               result_effsize_s[["estimate"]], 
+               result_effsize_s[["conf.int"]][["upper"]],
+               "CI is around the uncorrected d")
+```
+
+$d_{rm} \rightarrow$ `paired = TRUE, hedges.correction = TRUE)`
+
+```{r}
+result_effsize_rm <- effsize::cohen.d(d ~ f, hedges.correction = T, paired = T, noncentral=TRUE)
+rm_effsize <- c("effsize", 
+                "Option II",
+                result_effsize_rm[["conf.int"]][["lower"]], 
+                result_effsize_rm[["estimate"]], 
+                result_effsize_rm[["conf.int"]][["upper"]],
+                "")
+```
+
+```{r}
+result_effsize_z <- effsize::cohen.d(d ~ f, hedges.correction = T, paired = T, within = F, noncentral=TRUE)
+z_effsize <- c("effsize", 
+                "Option II",
+                result_effsize_z[["conf.int"]][["lower"]], 
+                result_effsize_z[["estimate"]], 
+                result_effsize_z[["conf.int"]][["upper"]],
+                "")
+```
+
+$d_{b} \rightarrow$ `paired = FALSE, pooled = FALSE, hedges.correction = TRUE`
+
+```{r}
+result_effsize_b <- effsize::cohen.d(d~f, hedges.correction = T, pooled = F, noncentral=TRUE, paired = FALSE)
+b_effsize <- c("effsize", 
+               "Option II",
+               result_effsize_b[["conf.int"]][["lower"]], 
+               result_effsize_b[["estimate"]], 
+               result_effsize_b[["conf.int"]][["upper"]],
+               "df = n1+n2-2")
+```
+
+$d_{b} \rightarrow$ `paired = TRUE, pooled = FALSE, hedges.correction = TRUE`
+
+```{r}
+result_effsize_b2 <- effsize::cohen.d(d~f, hedges.correction = T, pooled = F, noncentral=TRUE, paired = TRUE)
+b_effsize2 <- c("effsize2", 
+               "Option II",
+               result_effsize_b2[["conf.int"]][["lower"]], 
+               result_effsize_b2[["estimate"]], 
+               result_effsize_b2[["conf.int"]][["upper"]],
+               "if you use paired = T, this still calculated d_rm, is not an error but good to know so i am not gonna include it in the table / df = n1-1")
+```
+
+### Variance
+
+Option I (`noncentral = FALSE`) but using the quantiles of a t-distribution instead of gaussian. What they do differently here is to apply the hedges correction again on the variance estimate, which i do not see described in the source they cite.
+
+Option II (`noncentral = TRUE`)
+
+We can see that it forms a CI around the uncorrected $d$ instead of the $g$.
+
+```{r}
+effsizeCI <- function(d, f, n1, n2, noncentral, conf.level = 0.95) {
+  
+  m = c()
+  s = c()
+  
+  for(l in levels(f)){
+    m = c(m,mean(d[f==l]))
+    s = c(s,sd(d[f==l]))
+  }
+  
+  delta.m = as.numeric(m[1] - m[2])
+  stdev = sqrt(((n1-1)*sd1^2+(n2-1)*sd2^2)/(n1+n2-2))
+  dd = delta.m / stdev
+  df = n1+n2-2
+  J = 1 - 3 / ( 4 * (n1+n2) - 9)
+  dd = dd * J # hedges G (point estimate)
+  
+  # Confidence Interval #
+  
+  if(noncentral){
+   
+    # Based on the document:
+    # David C. Howell (2010)
+    # Confidence Intervals on Effect Size
+    # https://www.uvm.edu/%7Edhowell/methods7/Supplements/Confidence%20Intervals%20on%20Effect%20Size.pdf
+    #
+    # Additional reference:
+    # Cumming, G.; Finch, S. (2001) 
+    # A primer on the understanding, use, and calculation of confidence intervals 
+    # that are based on central and noncentral distributions. 
+    # Educational and Psychological Measurement, 61, 633-649.
+    #
+    
+   s = stdev
+   t = delta.m / sqrt(s^2*(1/n1+1/n2))
+   ncp = compute_ncp(t,df)
+   conf.int=sort(c(ncp[1]*sqrt(1/n1+1/n2),ncp[2]*sqrt(1/n1+1/n2)))
+   
+  }
+  
+  else{
+      ## Probably the source is incorrect!!
+      ## The Handbook of Research Synthesis and Meta-Analysis 
+      ## (Cooper, Hedges, & Valentine, 2009)
+      ## p 238
+      #S_d = sqrt(((n1+n2)/(n1*n2) + .5*dd^2/df) * ((n1+n2)/df))
+      
+      # Robert J. Grissom and John J. Kim (2005)
+      # Effect size for researchers
+      # Lawrence Erlbaum Associates
+      # Equation 3.13 page 60
+    
+    S_d = sqrt((n1+n2)/(n1*n2) + .5*dd^2/(n1+n2))
+    S_d = S_d * J
+    Z = -qt((1-conf.level)/2,df)
+    conf.int = c(dd - Z*S_d,
+                 dd + Z*S_d)
+  }
+  
+  return(setNames(c(conf.int[1], dd, conf.int[2]), 
+         c("Lower CI", "Effect Size", "Upper CI")))
+  
+}
+```
+
+### What could go wrong?
+
+There are different parameters which can be used to mix together the desired effectsize:
+
+-   `pooled`: a logical indicating whether compute pooled standard deviation or the whole sample standard deviation. If pooled=TRUE (default) pooled sd is used, if pooled=FALSE the standard deviation of the the control group (the second argument or the one corresponding the the second level of the factor) is used instead.
+-   `paired`: a logical indicating whether to consider the values as paired, a warning is issued if paired==TRUE with the formula interface and not \| Subject(id) or with data and factor and no subject is provided
+-   `within`: indicates whether to compute the effect size using the within subject variation, taking into consideration the correlation between pre and post samples.
+
+```{r}
+eff1 <- effsize::cohen.d(d~f, pooled = T, paired = T, within = T)
+eff2 <- effsize::cohen.d(d~f, pooled = F, paired = T, within = T)
+eff3 <- effsize::cohen.d(d~f, pooled = T, paired = T, within = F)
+eff4 <- effsize::cohen.d(d~f, pooled = F, paired = T, within = F)
+eff5 <- effsize::cohen.d(d~f, pooled = T, paired = F, within = T)
+eff6 <- effsize::cohen.d(d~f, pooled = T, paired = F, within = F)
+eff7 <- effsize::cohen.d(d~f, pooled = F, paired = F, within = F)
+eff8 <- effsize::cohen.d(d~f, pooled = F, paired = F, within = T)
+```
+
+```{r}
+eff1$estimate
+eff2$estimate
+eff3$estimate
+eff4$estimate
+eff5$estimate
+eff6$estimate
+eff7$estimate
+eff8$estimate
+```
+
+There are 8 different combinations of the parameters which yields 4 different results. Note, the default parameters are `pooled = TRUE` and `paired = FALSE`.
+
+The parameter `paired` dominates the parameter `pooled`, see the source code below. This means when the user specifies `paired = TRUE`, it does not matter what is chosen in `pooled`.
+
+So the guide basically is:
+
+-   If you have between data, you can leave the default settings and just change the pooled parameter to either get d_s or d_b.
+-   If you have within data, you can leave the default settings and just change the paired parameter to get d_rm, the within parameter is = TRUE per default which yields d_rm. If you change the within parameter to FALSE, you get d_z.
+
+Equivalent formulations are
+
+```{r, eval = FALSE}
+if( paired ){
+    if( n1 != n2 ){
+      stop("Paired computation requires equal number of measures.");
+      return;
+    }
+    
+    s.dif = sd(diff(d,lag=n1))
+    if(within){
+      vals = split(d,f)
+      if(s[1]==0 || s[2]==0){
+        r=0;
+      }else{
+        r = cor(vals[[1]],vals[[2]])
+        if(is.na(r)) r = 0;
+      }
+      stdev = s.dif / sqrt(2-2*r)
+      #    Michael Borenstein, L. V. Hedges, J. P. T. Higgins and H. R. Rothstein
+      #    Introduction to Meta-Analysis.
+      # Formula 4.27
+    }else{
+      r = 0.5
+      stdev = s.dif
+    }
+  }
+
+else if(pooled){
+    # Gibbons, R. D., Hedeker, D. R., & Davis, J. M. (1993). 
+    # Estimation of effect size from a series of experiments 
+    #    involving paired comparisons. 
+    # Journal of Educational Statistics, 18, 271-279.
+    stdev = sqrt(((n1-1)*s[1]^2+(n2-1)*s[2]^2)/(n1+n2-2))
+  }else{
+    #dd = (delta.m) / sd(d);
+    stdev = s[2]
+  }
+
+  dd = delta.m / stdev;
+  df = n1+n2-2
+  
+   
+  res = list()
+  if(hedges.correction){
+    # Hedges, L. V. & Olkin, I. (1985). 
+    # Statistical methods for meta-analysis. 
+    # Orlando, FL: Academic Press.
+    if(paired){
+      J = 1 - 3/(4*(n1 - 1) - 1)
+    }else{
+      J = 1 - 3 / ( 4 * (n1+n2) - 9)
+    }
+    dd = dd * J
+    res$method = "Hedges's g"
+    res$name = "g"
+    res$J = J
+  }else{
+    if(pooled){
+      res$method = "Cohen's d"
+      res$name = "d"
+    }else{
+      res$method = "Glass's Delta"
+      res$name = "Delta"
+    }
+  }
+```
+
+## effectsize (1.0.0)
+
+### Options
+
+`Default Settings`
+
+-   cohend_d
+
+```{r}
+formals(effectsize::cohens_d)
+```
+
+The default version is a not bias corrected $d_s$.
+
+-   repeated_measures_d
+
+```{r}
+effectsize::repeated_measures_d(x = gr1, y = gr2, data = df_raw)
+```
+
+The default is a bias corrected $d_rm$.
+
+$d_s \rightarrow$ `effectsize::cohens_d(pooled_sd = TRUE)`
+
+```{r}
+effectsize_s1 <- effectsize::cohens_d(x = gr1, y = gr2, data = df_raw, pooled_sd = TRUE, adjust = TRUE)
+s_effectsize1 <- c("effectsize", 
+                   "Option II",
+                   effectsize_s1$CI_low, 
+                   effectsize_s1$Hedges_g, 
+                   effectsize_s1$CI_high,
+                   "Calculates the CI first anf then corrects the estimates and the CI bounds")
+```
+
+$d_s \rightarrow$ `effectsize::repeated_measures_d(method = “d”)`
+
+```{r}
+effectsize_s2 <- effectsize::repeated_measures_d(x = gr1, y = gr2, data = df_raw, method = "d", adjust = TRUE)
+s_effectsize2 <- c("effectsize", 
+                   "Option I",
+                   effectsize_s2$CI_low, 
+                   effectsize_s2$Cohens_d, 
+                   effectsize_s2$CI_high,
+                   "Calculates the CI first anf then corrects the estimates and the CI bounds / is proposed as a within effect but uses the same estimator accounts for the                             dependence in the CI")
+```
+
+$d_{avg} \rightarrow$ `effectsize::cohens_d(pooled_sd = FALSE)`
+
+```{r}
+effectsize_avg1 <- effectsize::cohens_d(x = gr1, y = gr2, data = df_raw, pooled_sd = FALSE, adjust = TRUE)
+avg_effectsize1 <- c("effectsize",
+                     "Option II",
+                     effectsize_avg1$CI_low, 
+                     effectsize_avg1$Hedges_g, 
+                     effectsize_avg1$CI_high,
+                     "Between / Declare")
+
+# s <- sqrt((s1^2 + s2^2) / 2)
+# hn <- (2 * (n2 * s1^2 + n1 * s2^2)) / (n1 * n2 * (s1^2 + s2^2))
+# se1 <- sqrt(s1^2 / n1)
+# se2 <- sqrt(s2^2 / n2)
+# se <- sqrt(se1^2 + se2^2)
+# df1 <- se^4 / (se1^4 / (n1 - 1) + se2^4 / (n2 - 1))
+```
+
+$s = \sqrt{\frac{s_1^2 + s_2^2}{2}}$
+
+$h_n = \frac{2 \cdot (n_2 s_1^2 + n_1 s_2^2)}{n_1 n_2 (s_1^2 + s_2^2)}$
+
+$SE_1 = \sqrt{\frac{s_1^2}{n_1}}, \quad SE_2 = \sqrt{\frac{s_2^2}{n_2}}$
+
+$SE = \sqrt{SE_1^2 + SE_2^2}$
+
+$df = \frac{SE^4}{\frac{SE_1^4}{n_1 - 1} + \frac{SE_2^4}{n_2 - 1}}$
+
+--\> think this is the same as the declare
+
+$d_{avg} \rightarrow$ `effectsize::repeated_measures_d(method = “av”)`
+
+```{r}
+effectsize_avg2 <- effectsize::repeated_measures_d(x = gr1, y = gr2, data = df_raw, method = "av", adjust = TRUE)
+avg_effectsize2 <- c("effectsize", 
+                     "Option I",
+                     effectsize_avg2$CI_low, 
+                     effectsize_avg2$d_av, 
+                     effectsize_avg2$CI_high,
+                     "Within")
+```
+
+$d_z \rightarrow$ `effectsize::cohens_d(paired = TRUE)`
+
+```{r}
+effectsize_z1 <- effectsize::cohens_d(x = gr1, y = gr2, data = df_raw, paired = TRUE, adjust = TRUE)
+z_effectsize1 <- c("effectsize", 
+                  "Option I",
+                  effectsize_z1$CI_low, 
+                  effectsize_z1$Hedges_g, 
+                  effectsize_z1$CI_high,
+                  "")
+```
+
+$d_z \rightarrow$ `effectsize::repeated_measures_d(method = “z”)`
+
+```{r}
+effectsize_z <- effectsize::repeated_measures_d(x = gr1, y = gr2, data = df_raw, method = "z", adjust = TRUE)
+z_effectsize <- c("effectsize", 
+                  "Option I",
+                  effectsize_z$CI_low, 
+                  effectsize_z$d_z, 
+                  effectsize_z$CI_high,
+                  "")
+```
+
+$d_{rm} \rightarrow$ `effectsize::repeated_measures_d(method = “rm”)`
+
+```{r}
+effectsize_rm <- effectsize::repeated_measures_d(x = gr1, y = gr2, data = df_raw, method = "rm", adjust = TRUE)
+rm_effectsize <- c("effectsize", 
+                   "Option I",
+                   effectsize_rm$CI_low, 
+                   effectsize_rm$d_rm, 
+                   effectsize_rm$CI_high,
+                   "")
+```
+
+$d_b \rightarrow$ `effectsize::glass_delta(adjust = TRUE)`
+
+```{r}
+effectsize_b1 <- effectsize::glass_delta(x = gr1, y = gr2, data = df_raw, adjust = TRUE)
+b_effectsize1 <- c("effectsize", 
+                   "Option II",
+                   effectsize_b1$CI_low, 
+                   effectsize_b1$Glass_delta_adjusted, 
+                   effectsize_b1$CI_high,
+                   "uses gr2 // uses df = n2-1")
+```
+
+$d_b \rightarrow$ `effectsize::repeated_measures_d(method = “b”)`
+
+```{r}
+effectsize_b2 <- effectsize::repeated_measures_d(x = gr1, y = gr2, data = df_raw, method = "b", adjust = TRUE)
+b_effectsize2 <- c("effectsize", 
+                   "Option I",
+                   effectsize_b2$CI_low,
+                   effectsize_b2$Beckers_d, 
+                   effectsize_b2$CI_high,
+                   "uses gr2 // uses df = n2-1")
+```
+
+### Variance
+
+The function `cohens_d` uses option II, the function `repeated_measures_d` uses option I with different estimates for the variance, in a comment in the source code they write that the CI using ncp should be implemented soon.
+
+$\texttt{d_s:}$
+
+\$\sigma\^2 = \$
+
+$\texttt{d_avg:}$
+
+$\sigma^2 = \frac{2(SD_1^2+SD_2^2-2Cov(X,Y))}{n(SD_1^2+SD_2^2)}$ as descibed in Algina et al., 2003, eq 4
+
+$\texttt{d_z:}$
+
+$\sigma^2 = \frac{1}{n} + \frac{g^2}{2n}$ as described in Hedges, L. V. & Olkin, I. (1985). Statistical methods for meta-analysis. Orlando, FL: Academic Press., which I cannot access unfortunately.
+
+$\texttt{d_rm:}$
+
+$\sigma^2 = \frac{\frac{1}{n} + g^2}{2n}\cdot g$ as described in Cooper et al., 2009, eq 12.21
+
+$\texttt{d_b:}$
+
+$\sigma^2 = \frac{2 (1 - r)}{n} + \frac{d^2}{2n}$ as described in Becker (1988), eq 6. I think the correct formula would have been $\frac{2 (1 - r)}{n} + \frac{d^2}{2(n-1)}$.
+
+### What could go wrong?
+
+The repeated_measures function is pretty well documented, with the cohens D function there are still some things unclear:
+
+```{r}
+eff1 <- effectsize::cohens_d(x = gr1, y = gr2, data = df_raw, pooled_sd = TRUE, paired = TRUE)
+eff2 <- effectsize::cohens_d(x = gr1, y = gr2, data = df_raw, pooled_sd = FALSE, paired = TRUE)
+eff3 <- effectsize::cohens_d(x = gr1, y = gr2, data = df_raw, pooled_sd = TRUE, paired = FALSE)
+eff4 <- effectsize::cohens_d(x = gr1, y = gr2, data = df_raw, pooled_sd = FALSE, paired = FALSE)
+```
+
+```{r}
+eff1$Cohens_d
+eff2$Cohens_d
+eff3$Cohens_d
+eff4$Cohens_d
+```
+
+Again, the paired parameter dominates the pooled parameter.
+
+So there is the possibility of a user wanting to calculate d_avg for within data and specifies: `effectsize::cohens_d(pooled_sd = FALSE, paired = TRUE)` which results in `effectsize::cohens_d` calculating d_z instead of d_avg.
+
+## Durga (2.0)
+
+### Options
+
+`Default Settings`
+
+```{r}
+Durga::DurgaDiff(x = df_raw, data.col = "score", group.col = "group", groups = c("gr1", "gr2"))
+```
+
+It calculates a mean difference but not a standardised mean difference. This is well documented IMO.
+
+$d_s \rightarrow$ `Durga::DurgaDiff(effect.type = "hedges g_s")`
+
+```{r}
+durga_s <- Durga::DurgaDiff(x = df_raw, data.col = "score", group.col = "group", groups = c("gr1", "gr2"), effect.type = "hedges g_s")
+s_durga <- c("durga", 
+             "Option III",
+             -durga_s[["group.differences"]][[1]][["bca"]][5], 
+             -durga_s[["group.differences"]][[1]][["t0"]], 
+             -durga_s[["group.differences"]][[1]][["bca"]][4],
+             "m2-m1 instead of m1-m2")
+```
+
+$d_{avg} \rightarrow$ `Durga::DurgaDiff(effect.type = "hedges g")`
+
+```{r}
+durga_avg <- Durga::DurgaDiff(x = df_raw, data.col = "score", group.col = "group", effect.type = "hedges g")
+avg_durga <- c("durga", 
+               "Option III",
+               -durga_avg[["group.differences"]][[1]][["bca"]][5], 
+               -durga_avg[["group.differences"]][[1]][["t0"]], 
+               -durga_avg[["group.differences"]][[1]][["bca"]][4],
+               "Between / m2-m1 instead of m1-m2 / Declare")
+```
+
+$d_{avg} \rightarrow$ `Durga::DurgaDiff(effect.type = "hedges g")`
+
+```{r}
+durga_avg2 <- Durga::DurgaDiff(x = df_raw, data.col = "score", group.col = "group", id.col = "id", effect.type = "hedges g")
+avg_durga2 <- c("durga", 
+               "Option III",
+               -durga_avg2[["group.differences"]][[1]][["bca"]][5], 
+               -durga_avg2[["group.differences"]][[1]][["t0"]], 
+               -durga_avg2[["group.differences"]][[1]][["bca"]][4],
+               "Within / m2-m1 instead of m1-m2")
+```
+
+$d_{avg} \rightarrow$ `Durga::DurgaDiff(effect.type = "hedges g")`
+
+```{r}
+durga_avg3 <- Durga::DurgaDiff(x = df_raw, data.col = "score", group.col = "group", id.col = "id", effect.type = "hedges g_av")
+avg_durga3 <- c("durga", 
+               "Option III",
+               -durga_avg3[["group.differences"]][[1]][["bca"]][5], 
+               -durga_avg3[["group.differences"]][[1]][["t0"]], 
+               -durga_avg3[["group.differences"]][[1]][["bca"]][4],
+               "Within / m2-m1 instead of m1-m2 / Lakens alternative")
+```
+
+$d_z \rightarrow$ `Durga::DurgaDiff(effect.type = "hedges g_z", id.col = "id)`
+
+```{r}
+durga_z <- Durga::DurgaDiff(x = df_raw, data.col = "score", group.col = "group", effect.type = "hedges g_z", id.col = "id")
+z_durga <- c("durga", 
+             "Option III",
+             -durga_z[["group.differences"]][[1]][["bca"]][5], 
+             -durga_z[["group.differences"]][[1]][["t0"]], 
+             -durga_z[["group.differences"]][[1]][["bca"]][4],
+             "adjusted df")
+```
+
+$d_b \rightarrow$ `Durga::DurgaDiff(effect.type = "glass delta_pre")`
+
+```{r}
+durga_b <- Durga::DurgaDiff(x = df_raw, data.col = "score", 
+                            group.col = "group",
+                            effect.type = "glass delta_pre")
+b_durga <- c("durga", 
+             "Option III",
+             -durga_b[["group.differences"]][[1]][["bca"]][5], 
+             -durga_b[["group.differences"]][[1]][["t0"]], 
+             -durga_b[["group.differences"]][[1]][["bca"]][4],
+             "m2-m1 instead of m1-m2 // no hedges correction")
+```
+
+### Variance
+
+Uses bootstrapping to determine confidence interval
+
+## rstatix (0.7.2)
+
+### Options
+
+`Default Settings`
+
+```{r}
+formals(rstatix::cohens_d)
+```
+
+This is equal to a not bias corrected $d_{avg}$.
+
+$d_s \rightarrow$ `rstatix::two_independent_sample_d(var.equal = TRUE)`
+
+```{r}
+rstatix_s <- rstatix::cohens_d(data = df_raw, formula = score ~ group, var.equal = TRUE, hedges.correction = TRUE, ci = TRUE)
+s_rstatix <- c("rstatix", 
+             "Option III",
+             rstatix_s[["conf.low"]],
+             rstatix_s[["effsize"]],
+             rstatix_s[["conf.high"]],
+             "")
+```
+
+$d_{avg} \rightarrow$ `rstatix::two_independent_sample_d(var.equal = FALSE)`
+
+```{r}
+rstatix_avg <- rstatix::cohens_d(data = df_raw, formula = score ~ group, hedges.correction = TRUE, ci = TRUE, paired = FALSE, var.equal = FALSE)
+avg_rstatix <- c("rstatix", 
+             "Option III",
+             rstatix_avg[["conf.low"]],
+             rstatix_avg[["effsize"]],
+             rstatix_avg[["conf.high"]],
+             "canonical df")
+```
+
+$d_{z} \rightarrow$ `rstatix::two_independent_sample_d(paired = TRUE)`
+
+```{r}
+rstatix_z <- rstatix::cohens_d(data = df_raw, formula = score ~ group, hedges.correction = TRUE, ci = TRUE, paired = TRUE)
+z_rstatix <- c("rstatix", 
+             "Option III",
+             rstatix_z[["conf.low"]],
+             rstatix_z[["effsize"]],
+             rstatix_z[["conf.high"]],
+             "adjusted df")
+```
+
+Note, you should not use `paired = TRUE, var.equal = FALSE` and expect $d_avg$ for within data. it will just give you $d_z$ because `var.equal` is nested inside `paired` and there is no distinction between the two for the case when `paired = TRUE`. I will not include it because this this is described in the parameter description: "var.equal a logical variable indicating whether to treat the two variances as being equal. If TRUE then the pooled variance is used to estimate the variance otherwise the Welch (or Satterthwaite) approximation to the degrees of freedom is used. Used only for unpaired or independent samples test.
+
+### Variance
+
+Based on bootstrapping (Option III)
+
+### What could go wrong?
+
+```{r}
+eff1 <- rstatix::cohens_d(data = df_raw, formula = score ~ group, paired = T, var.equal = T)
+eff2 <- rstatix::cohens_d(data = df_raw, formula = score ~ group, paired = T, var.equal = F)
+eff3 <- rstatix::cohens_d(data = df_raw, formula = score ~ group, paired = F, var.equal = T)
+eff4 <- rstatix::cohens_d(data = df_raw, formula = score ~ group, paired = F, var.equal = F)
+```
+
+```{r}
+eff1$effsize
+eff2$effsize
+eff3$effsize
+eff4$effsize
+```
+
+Again, the paired parameter dominates the var.equal parameter and therefore only if it is not paired the var.equal parameter is used.
+
+## Desctools (0.99.59)
+
+### Options
+
+`Default settings`
+
+```{r}
+formals(DescTools::CohenD)
+```
+
+The default version is a not bias corrected $d_s$.
+
+$d_s \rightarrow$ `desctools::CohenD(x = gr1, y = gr2, var.equal = TRUE)`
+
+```{r}
+desctools_s <- DescTools::CohenD(x = gr1, y = gr2, pooled = TRUE, correct = TRUE, conf.level = .95)
+s_desctools <- c("desctools", 
+                 "Option II",
+                 desctools_s[2],
+                 desctools_s[1],
+                 desctools_s[3],
+                 "")
+```
+
+$d_{avg} \rightarrow$ `desctools::CohenD(x = gr1, y = gr2, var.equal = FALSE)`
+
+```{r}
+desctools_avg <- DescTools::CohenD(x = gr1, y = gr2, pooled = FALSE, correct = TRUE, conf.level = .95)
+avg_desctools <- c("desctools", 
+                 "Option II",
+                 desctools_avg[2],
+                 desctools_avg[1],
+                 desctools_avg[3],
+                 "")
+```
+
+This is actually not $d_{avg}$ but uses the SD from the whole sample as the SD, which is not the same as taking the average of the two SDs.
+
+### Variance
+
+Option II
+
+# Comparing the estimates
+
+## $d_s$
+
+```{r}
+list(s_metafor, s_esc, s_psych, s_esci, s_mbess, s_lsr, s_effsize, s_effectsize1, s_effectsize2, s_durga, s_rstatix, s_desctools) |> 
+  map_dfr(~ tibble(
+    Package = pluck(.x, 1, .default = NA),
+    Variance = pluck(.x, 2, .default = NA),
+    CI_l = pluck(.x, 3, .default = NA),
+    Estimate = pluck(.x, 4, .default = NA),
+    CI_u = pluck(.x, 5, .default = NA),
+    Comment = pluck(.x, 6, .default = NA))) |> 
+  mutate(across(c(Estimate, CI_l, CI_u), ~ round(as.numeric(.), 5))) |>
+  arrange(Estimate, Variance) |>
+  gt()
+```
+
+-   We observe that all except for the `psych` package agree on the estimate. This comes from the fact that the implementation of the hedges correction is not correctly done in the psych package.
+-   The metafor and the esc package use the first method for the construction of the confidence interval, therefore they should agree. The discrepancy comes from the fact that the variance of the uncorrected estimate is used to construct the CI in the esc package. One implementation of the effectsize package should also agree with them but ....
+-   The mbess, desctoola and esci package agree on all three estimates
+-   The confidence interval from the psych package agrees with the CI from the effsize package. We can observe in the source code that the CI in the effsize package is formed around the uncorrected estimate (which is also done in the psych package)
+-   The durga package stands on its own because it is the only one that uses a bootstrap confidence interval
+-   As I understand currently the difference in the confidence intervals for the effectsize package come from the fact that it applies the correction on the estimate and the CI bounds after calculating them using the uncorrected estimate.
+
+## $d_{avg}$
+
+```{r}
+list(avg_metafor, avg_esci, avg_lsr, avg_effectsize1, avg_effectsize2, avg_durga, avg_durga2, avg_durga3, avg_rstatix) |> 
+ map_dfr(~ tibble(
+    Package = pluck(.x, 1, .default = NA),
+    Variance = pluck(.x, 2, .default = NA),
+    CI_l = pluck(.x, 3, .default = NA),
+    Estimate = pluck(.x, 4, .default = NA),
+    CI_u = pluck(.x, 5, .default = NA),
+    Comment = pluck(.x, 6, .default = NA))) |>
+  mutate(across(c(Estimate, CI_l, CI_u), ~ round(as.numeric(.), 5))) |>
+  arrange(Estimate, Variance) |>
+  gt()
+```
+
+All of the differences in the point estimates can be explained by looking at the source code. The CI all differ somehow, this probably comes from the fact that there inside a subgroup (e.g. between and using the Declare way of calculating the df) there are no implementations that use the same method for the CI.
+
+-   The durga and effectsize packages provide an option to use it for within designs, they agree on the point estimate
+-   The effectsize, esci and durga package agree on the point estimate for their between designs
+-   The metafor and rstatix packages use a different $df = n_1 + n_2 -2$) instead of the more complex formula from Declare et al. and therefore the hedges bias correction is different
+-   The lsr package does not provide an option to correct for the bias in this version, also no CI
+-   The durga package is the only one that also implemented the Lakens alternative and therefore yields a different estimate (see [here](#versions) for what I mean with Lakens alternative).
+
+## $d_z$
+
+```{r}
+list(z_esc, z_lsr, z_effectsize, z_effectsize1, z_durga, z_rstatix, z_effsize) |> 
+ map_dfr(~ tibble(
+    Package = pluck(.x, 1, .default = NA),
+    Variance = pluck(.x, 2, .default = NA),
+    CI_l = pluck(.x, 3, .default = NA),
+    Estimate = pluck(.x, 4, .default = NA),
+    CI_u = pluck(.x, 5, .default = NA),
+    Comment = pluck(.x, 6, .default = NA))) |>
+  mutate(across(c(Estimate, CI_l, CI_u), ~ round(as.numeric(.), 5))) |>
+  arrange(Estimate, Variance) |>
+  gt()
+```
+
+The differences in the point estimates can be explained using the source code:
+
+-   The effectsize, durga and rstatix package agree on the point estimate, they use different methods for the CI
+
+-   I think the esc package uses the df $n_1 + n_2 - 2$ which is not applicable in this scenario
+
+-   The lsr package does not provide an option to correct for the bias in this version, also no CI
+
+## $d_{rm}$
+
+```{r}
+list(rm_effsize, rm_effectsize) |> 
+ map_dfr(~ tibble(
+    Package = pluck(.x, 1, .default = NA),
+    Variance = pluck(.x, 2, .default = NA),
+    CI_l = pluck(.x, 3, .default = NA),
+    Estimate = pluck(.x, 4, .default = NA),
+    CI_u = pluck(.x, 5, .default = NA),
+    Comment = pluck(.x, 6, .default = NA))) |>
+  mutate(across(c(Estimate, CI_l, CI_u), ~ round(as.numeric(.), 5))) |>
+  arrange(Estimate, Variance) |>
+  gt()
+```
+
+I would say they agree on the point estimate, the CI is different because they use a different method to calculate the CI.
+
+## $d_b$
+
+```{r}
+list(b_metafor, b_effectsize1, b_effectsize2, b_effsize, b_durga) |> 
+ map_dfr(~ tibble(
+    Package = pluck(.x, 1, .default = NA),
+    Variance = pluck(.x, 2, .default = NA),
+    CI_l = pluck(.x, 3, .default = NA),
+    Estimate = pluck(.x, 4, .default = NA),
+    CI_u = pluck(.x, 5, .default = NA),
+    Comment = pluck(.x, 6, .default = NA))) |> 
+  mutate(across(c(Estimate, CI_l, CI_u), ~ round(as.numeric(.), 5))) |>
+  arrange(Estimate, Variance) |>
+  gt()
+```
+
+-   Three of the packages agree on the point estimate, not sure why metafor and effectsize do not agree on the CI (they are very close tho).
+
+-   The effsize differs in point estimate because they use n1+n2-2 instead of n2-1. Also the confidence interval does not contain the point estimate, which happens when the user
+
+-   The durga differs in point estimate because there is not hedges correction possible
+
+# Conclusions
+
+## Table 1
+
+The goal for this table is to summarize the different options there are for calculating cohens D in different packages and
+functions. Based on the excel file.
+
+## Downloads
+
+This could serve as a proxy for how relevant certain packages are. Of course many packages do have a lot of other functions so the link between number of downloads and "number of cohens d function users" of that package is very vague. 
+
+```{r}
+DL <- cranlogs::cran_downloads(packages = c("metafor", "esc", "psych", "esci", "MBESS", "lsr", "effsize", "effectsize", "Durga", "rstatix", "DescTools"), 
+                                  from = "2010-01-01", to = "2025-03-26")
+dfDL <- DL |> 
+  mutate(Documentation = case_when(package %in% c("esci", "effectsize", "Durga") ~ "Perfect",
+                                   package %in% c("metafor", "psych", "DescTools") ~ "Good",
+                                   package %in% c("esc", "lsr", "MBESS", "effsize", "rstatix") ~ "Bad"),
+         month_year = zoo::as.yearmon(date)) 
+
+dfDL |> 
+  group_by(package, month_year) |> 
+  summarise(count = sum(count),
+            Documentation = first(Documentation)) |> 
+  ggplot(aes(x = month_year, y = count, color = package)) +
+  geom_line()+
+  theme_bw() +
+  labs(y = "Downloads", title = "Downloads since 2020") + 
+  theme(legend.position = "bottom", legend.title = element_blank())
+
+dfDL |> 
+  group_by(package) |> 
+  summarise(count = sum(count)) |> 
+  ggplot(aes(x = package, y = count))+
+  geom_col() +
+  theme_bw() +
+  labs(title = "Downloads since 2010")
+```
+
+## Potential Issues for an User
+
+In pretty much all the packages the default version is d_s and witht some argument `equal_variance` you can change to d_avg. This is pretty straight forward. The issue comes in if you have within data and you want to somehow account for this. For this I will ignore packages that specifically name the estimator they use or packages that do not use any within estimator at all. For example in the `effectsize` package you have to plug in the name of the estimator you want to use. It can therefore be assumed that theoretically at least the user is informed about what is being calculated. In general we should probably try to distinguish between the fact that these estimators yield different results and how packages deal with this fact. 
+
+On the other hand there are packages that do just say that their method respects the within structure of the data but there is not an exact name attached to it so the researcher does not know whether they calculate e.g. $d_{rm}$ or $d_z$. A motivation for this problem can be seen in this[<https://github.com/mtorchiano/effsize/issues/59>] github issue, where the user of the `effsize` package is not able to understand why the estimate from the `effsize` package differs from what was calculated by the other packages. This is not due to the fact that there is an error in the implementation but solely due to the different versions of cohens D they target. Because I think all others actually do a decent job in describing what they are doing in the documentation, the following packages might be a bit hard to understand: effsize, rstatix and esc. 
+
+Some of the difficulties are already described above. I will repeat them here so all the necessary info is in one place.
+
+-   ESC
+
+    -   The documentation just says that the parameter r is there for "Correlation for within-subject designs (paired samples, repeated measures)." This does not inform the user about which parameter is targeted. It is actually d_z
+
+-   effsize
+
+    -   IMO the documention is not straight forward because you juggle arround with the parameters `paired` and `within`. The documentation says:
+        -   paired
+            -   a logical indicating whether to consider the values as paired, a warning is issued if paired==TRUE with the formula interface and not \| Subject(id) or with data and factor and no subject is provided
+        -   within
+            -   indicates whether to compute the effect size using the within subject variation, taking into consideration the correlation between pre and post samples.
+    -   Maybe I'm dumb but to me it is not obvious what is happening. By playing witht the parameters you get the following mapping: 
+        -   $d_{rm}$
+            -   eff1 \<- effsize::cohen.d(d\~f, pooled = T, paired = T, within = T)
+            -   eff2 \<- effsize::cohen.d(d\~f, pooled = F, paired = T, within = T)
+        -   $d_z$
+            -   eff3 \<- effsize::cohen.d(d\~f, pooled = T, paired = T, within = F)
+            -   eff4 \<- effsize::cohen.d(d\~f, pooled = F, paired = T, within = F)
+        -   $d_s$
+            -   eff5 \<- effsize::cohen.d(d\~f, pooled = T, paired = F, within = T)
+            -   eff6 \<- effsize::cohen.d(d\~f, pooled = T, paired = F, within = F)
+        -   $d_{avg}$
+            -   eff7 \<- effsize::cohen.d(d\~f, pooled = F, paired = F, within = F)
+            -   eff8 \<- effsize::cohen.d(d\~f, pooled = F, paired = F, within = T)
+
+-   rstatix
+
+    -   The documentation just says "paired: a logical indicating whether you want a paired test.". We can see that this  targets $d_z$
+
+    -   Note, you should not use `paired` = TRUE, `var.equal` = FALSE and expect $d_{avg}$ for within data. it will just give you $d_z$ because `var.equal` is nested inside `paired` and there is no distinction between the two for the case when `paired` = TRUE.
+
+## Simulation Study 1
+
+Here I simulate the differences between d_z and d_rm under different circumstances with the idea in mind that for these packages it is not clear which of the two we are targeting.
+
+```{r cache=T}
+parameters <- expand.grid(sample_size = c("n = 20 overall", "n = 200 overall"),
+                          sds = c("equal", "unequal"),
+                          r = c("small = .1", "medium = .3", "large = .8"),
+                          d = c("small", "medium", "large")) |> 
+    mutate(n = ifelse(sample_size == "n=20 per group", 20, 200),
+         sd1 = ifelse(sds == "equal", 1, 1),
+         sd2 = ifelse(sds == "equal", 1, 1.5),
+         r_value = case_when(r == "small = .1" ~ 0.1, 
+                             r == "medium = .3" ~ 0.3, 
+                             TRUE ~ 0.8),
+         m1 = case_when(d == "small" ~ 0.1, 
+                        d == "medium" ~ 0.5, 
+                        TRUE ~ 1),
+         m2 = 0)
+
+simulate_condition <- function(sample_size, sds, r, d, n, sd1, sd2, r_value, m1, m2, n_sim) {
+  
+    map_dfr(1:n_sim, function(sim_id) {
+    
+    data <- faux::rnorm_multi(
+      n = n,
+      mu = c(stimulus1 = m1, stimulus2 = m2),
+      sd = c(sd1, sd2),
+      r = matrix(c(1, r_value, r_value, 1), ncol = 2)) |>
+      tibble::rownames_to_column("id") |>
+      tidyr::pivot_longer(cols = -id, names_to = "timepoint", values_to = "score") |>
+      dplyr::mutate(timepoint = forcats::fct_relevel(timepoint, "stimulus2", "stimulus1"))
+    
+    # Effect size estimates
+    d_rm <- effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "rm")$d_rm
+    d_z  <- effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "z")$d_z
+    
+    tibble::tibble(
+      sim_id = sim_id,
+      sample_size = sample_size,
+      sds = sds,
+      r = r,
+      d = d,
+      d_rm = d_rm,
+      d_z = d_z,
+      diff = d_rm - d_z)
+  })
+  }
+  
+all_results <- pmap_dfr(
+  parameters,
+  simulate_condition,
+  n_sim = 1000)
+
+all_results |> 
+  ggplot(aes(x = diff, fill = d)) +
+  geom_density() + 
+  facet_grid(sample_size ~ r) +
+  theme_classic() +
+  labs(x = "Difference between d_rm and d_z", 
+       title = "Difference between d_rm and d_z for different effect sizes and correlations")
+```
+
+## Simulation Study 2
+
+This simulation is not convincing but I think there might be a better solution somewhere in this direction. 
+
+We can see that there are differences between the measures but how can this be exploited? A researcher may just chose whatever effectsize that givers them the larger estimate. The correlation between the two timepoints defines whether d_z or d_rm is larger. I randomly draw the correlation between the two timepoints and simulate data for a null effect. 
+
+I think this would need to be integrated into a overall framwork of how researchers selectively report their results and chosing which version of cohens D is just one of the degrees of freedom. 
+
+```{r}
+sim2 <- function(n, sd1 = 1, sd2 = 1, n_sim) {
+  
+    map_dfr(1:n_sim, function(sim_id) {
+    
+    m1 <- rnorm(1, mean = 0, sd = 1)
+    r_value <- runif(1, min = 0.2, max = .7)
+      
+    data <- faux::rnorm_multi(
+      n = n,
+      mu = c(stimulus1 = m1, stimulus2 = 0),
+      sd = c(sd1, sd2),
+      r = matrix(c(1, r_value, r_value, 1), ncol = 2)) |>
+      tibble::rownames_to_column("id") |>
+      tidyr::pivot_longer(cols = -id, names_to = "timepoint", values_to = "score") |>
+      dplyr::mutate(timepoint = forcats::fct_relevel(timepoint, "stimulus2", "stimulus1"))
+    
+    # Effect size estimates
+    d_rm <- effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "rm", adjust = TRUE)$d_rm
+    d_z  <- effectsize::repeated_measures_d(score ~ timepoint | id, data = data, method = "z", adjust = TRUE)$d_z
+
+    tibble::tibble(
+      sim_id = sim_id,
+      sample_size = n,
+      r = r_value,
+      d_rm = d_rm,
+      d_z = d_z) |> 
+      mutate(max = case_when(d_rm < 0 ~ min(d_rm, d_z),
+                       d_rm >= 0 ~ max(d_rm, d_z),
+                       TRUE ~ NA))
+  })
+}
+
+check <- sim2(n = 50, n_sim = 1000)
+
+check |> 
+  ggplot() +
+  geom_density(aes(x = d_rm), fill = "blue", alpha = 0.5) +
+  geom_density(aes(x = d_z), fill = "red", alpha = 0.5) +
+  geom_density(aes(x = max), fill = "green", alpha = 0.5) 
+```
+
+## Case study 1
+
+I use the sleep dataset from the effectsize package. The sample size is very small with only 10 subjects with 2 observations each.
+
+```{r}
+library(effsize)
+data(sleep)  # built-in; 10 pairs of pre/post scores
+
+sleep_wide <- sleep |>
+  pivot_wider(
+    names_from = group,
+    values_from = extra,
+    names_prefix = "group_")
+
+sleep |>
+  ggplot(aes(x = factor(group), y = extra)) +
+  geom_violin(aes(fill = factor(group)), width = 0.4, alpha = 0.3, color = NA) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_line(aes(group = ID), alpha = 0.6) +
+  scale_x_discrete(labels = c("Condition 1", "Condition 2")) +
+  scale_fill_manual(values = c("#66c2a5", "#fc8d62")) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(
+    x = NULL,
+    y = "Extra Sleep (hours)")
+```
+I am now back into the setting of comparing all the different estimators. We can still focus on the differences in d_rm and d_z. 
+
+```{r}
+fct_effsize <- function(data, gr1, gr2){
+ 
+  # Capture the column names as strings
+  gr1_str <- deparse(substitute(gr1))
+  gr2_str <- deparse(substitute(gr2))
+
+  # Build the formula: Pair(gr1, gr2) ~ 1
+  pair_formula <- as.formula(
+    paste0("Pair(", gr1_str, ", ", gr2_str, ") ~ 1")
+  )
+
+d_rm <- effectsize::repeated_measures_d(x = pair_formula, 
+                                        data = data, 
+                                        method = "rm", adjust = TRUE) |> 
+  mutate(method = "d_rm") |> 
+  rename(d = d_rm) |> as.data.frame()
+
+d_z <- effectsize::repeated_measures_d(x = pair_formula, 
+                                       data = data, 
+                                       method = "z", adjust = TRUE) |> 
+  mutate(method = "d_z") |> 
+  rename(d = d_z) |> as.data.frame()
+
+d_avg <- effectsize::repeated_measures_d(x = pair_formula, 
+                                       data = data, 
+                                       method = "av", adjust = TRUE) |> 
+  mutate(method = "d_avg") |> 
+  rename(d = d_av) |> as.data.frame()
+
+d_b <- effectsize::repeated_measures_d(x = pair_formula, 
+                                       data = data, 
+                                       method = "b", adjust = TRUE) |> 
+  mutate(method = "d_b") |> 
+  rename(d = Beckers_d) |> as.data.frame()
+
+bind_rows(d_rm, d_z, d_avg, d_b)
+}
+
+fct_effsize(sleep_wide, gr1 = group_1, gr2 = group_2) |> gt()
+
+d_rm <- effectsize::repeated_measures_d(Pair(group_1, group_2) ~ 1, data = sleep_wide, method = "rm", adjust = TRUE) |> 
+      mutate(sig = case_when(CI_low < 0 & CI_high < 0 ~ 1,
+                         CI_low > 0 & CI_high > 0 ~ 1,
+                         TRUE ~ 0))
+```
+
+## Case study 2
+
+I look at the stroop dataset taken from the [github](https://github.com/Lakens/Stroop/blob/master/README.md) of Lakens.
+
+"Students in an introduction to psychology course completed an online Stroop task (<http://faculty.washington.edu/chudler/java/ready.html>) and named the colors in congruent trials (e.g., the word 'red' written in a red font) and incongruent trials (e.g., the word 'red' written in a green font). The time they took to name all words was self-reported in seconds (e.g., 21.3 seconds) for both the congruent and incongruent blocks."
+
+```{r}
+stroop <- read.csv("../data/stroop.csv", sep = " ", header = TRUE)
+
+stroop |> 
+  pivot_longer(cols = c(Congruent, Incongruent)) |> 
+  ggplot(aes(x = name, y = value)) +
+  geom_violin(aes(fill = name), width = 0.4, alpha = 0.3, color = NA) +
+  geom_point(aes(color = name), alpha = 0.3, size = 2) +
+  geom_line(aes(group = PPNR), alpha = 0.3, color = "grey") +
+  scale_fill_manual(values = c("#66c2a5", "#fc8d62")) +
+  scale_color_manual(values = c("#66c2a5", "#fc8d62")) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  labs(
+    x = NULL,
+    y = "Time (seconds)")
+```
+
+```{r}
+fct_effsize(stroop, gr1 = Congruent, gr2 = Incongruent) |> gt()
+```
+
+## Summary/Findings
+
+-   psych $\hookrightarrow$ false hedges correction
+
+-   Lakens paper $\hookrightarrow$ false d_avg (I think)
+
+-   effsize $\hookrightarrow$ possible to get point estimates outside the CI (no joke)
+
+-   In the packages effsize, rstatix and esc it is generally not described what exact within estimator is used. On one hand there may be substantial differences between d_rm and d_z (see simulation), on the other hand only effsize implements d_rm (effectsize does too but they name it explicitly).
+
+-   I did not find any convincing simulation yet which would tells us that this can be exploited systematically

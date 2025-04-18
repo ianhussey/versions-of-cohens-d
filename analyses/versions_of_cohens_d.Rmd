@@ -720,7 +720,7 @@ parameters <-
              r_stimulus1_stimulus2 = 0.9)
 
 parameters |>
-  pivot_longer(cols = everything(),
+  tidyr::pivot_longer(cols = everything(),
                names_to = "parameter",
                values_to = "value")
 
