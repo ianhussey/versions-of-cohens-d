@@ -1649,6 +1649,11 @@ check |>
   geom_density(aes(x = max), fill = "green", alpha = 0.5) 
 ```
 
+# Case Studies
+
+I will use the datasets collected in https://github.com/ianhussey/effect-size-distributions-and-extreme-examples in order to test the different estimators in real world scenarios.
+
+
 ## Case study 1
 
 I use the sleep dataset from the effectsize package. The sample size is very small with only 10 subjects with 2 observations each.
